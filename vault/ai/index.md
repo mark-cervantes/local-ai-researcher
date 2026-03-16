@@ -6,3 +6,5 @@ Entry point for agent-managed planning memory.
 - Threads (work + incidents): `vault/ai/threads/index.md`
 - Decisions (ADRs): `vault/ai/decisions/index.md`
 - Journal (chronological notes): `vault/ai/journal/index.md`
+
+Current canonical planning set: Researcher MCP v1 (`vault/ai/docs/index.md`).
