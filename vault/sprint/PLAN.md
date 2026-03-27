@@ -85,3 +85,11 @@ This is the minimum serial chain because the reader lane carries the largest beh
 - Every backlog task below maps to the canonical RMCP wave structure and keeps traceability through `rmcp_id`.
 - Dependencies are explicit enough for later tech-lead enrichment and orchestrator dispatch.
 - No product code, docs under `docs/`, or files under `vault/ai/docs/` are changed by this planning refresh.
+
+## Integration [Wave 2] — 2026-03-27
+Commands: tsc | vitest run | (lint: placeholder skipped)
+Build:  PASS
+Tests:  PASS — 228/228
+Lint:   SKIPPED — not configured
+Status: CLEAN
+Gate:   PASS
