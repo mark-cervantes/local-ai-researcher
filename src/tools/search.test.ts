@@ -5,6 +5,10 @@
  * 1. Envelope shape (schema_version, ok, meta, result/error)
  * 2. ResponseMeta fields on success and failure
  * 3. Provider provenance in meta
+ * 4. Normalized result fields (task 08.01)
+ * 5. Stable per-response IDs (task 08.01)
+ * 6. Error code mapping to v1 taxonomy (task 08.01)
+ * 7. Limit control with documented default (task 08.01)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -13,6 +17,12 @@ import type { SearchResult } from '../domain/types.js';
 import { SCHEMA_VERSION } from '../domain/types.js';
 import type { SearxngProvider } from '../providers/searxng.js';
 import { Logger } from '../lib/logger.js';
+import {
+  SearxngTimeoutError,
+  SearxngUnavailableError,
+  SearxngInvalidResponseError,
+  ErrorCode,
+} from '../lib/errors.js';
 
 // ---------------------------------------------------------------------------
 // Mock Factories
@@ -256,6 +266,280 @@ describe('createSearchTool', () => {
       expect(envelope.meta.timestamp).toBeDefined();
       expect(envelope.meta.provider_id).toBeDefined();
       expect(envelope.meta.provider_name).toBeDefined();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Task 08.01: Normalized result fields
+  // -------------------------------------------------------------------------
+
+  describe('normalized result fields (task 08.01)', () => {
+    it('each result has required id field', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const results = envelope.result.results as SearchResult[];
+      
+      expect(results.length).toBeGreaterThan(0);
+      for (const result of results) {
+        expect(result.id).toBeDefined();
+        expect(typeof result.id).toBe('string');
+        expect(result.id.length).toBeGreaterThan(0);
+      }
+    });
+
+    it('each result has canonical url field', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const results = envelope.result.results as SearchResult[];
+      
+      for (const result of results) {
+        expect(result.url).toBeDefined();
+        expect(typeof result.url).toBe('string');
+        expect(result.url).toMatch(/^https?:\/\//);
+      }
+    });
+
+    it('each result has title field', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const results = envelope.result.results as SearchResult[];
+      
+      for (const result of results) {
+        expect(result.title).toBeDefined();
+        expect(typeof result.title).toBe('string');
+      }
+    });
+
+    it('each result has excerpt field (snippet)', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const results = envelope.result.results as SearchResult[];
+      
+      for (const result of results) {
+        expect(result.excerpt).toBeDefined();
+        expect(typeof result.excerpt).toBe('string');
+      }
+    });
+
+    it('each result has source field (type)', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const results = envelope.result.results as SearchResult[];
+      
+      for (const result of results) {
+        expect(result.source).toBeDefined();
+        expect(['web', 'local', 'custom']).toContain(result.source);
+      }
+    });
+
+    it('results do not leak provider-specific fields to output', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const results = envelope.result.results as SearchResult[];
+      
+      // Verify no SearXNG-specific fields leak through (engines, categories, etc.)
+      for (const result of results) {
+        expect(result).not.toHaveProperty('engines');
+        expect(result).not.toHaveProperty('categories');
+        expect(result).not.toHaveProperty('engine');
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Task 08.01: Stable per-response IDs
+  // -------------------------------------------------------------------------
+
+  describe('stable per-response IDs (task 08.01)', () => {
+    it('generates unique request_id for each call (per-request identifier)', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      
+      const response1 = await tool.handler({ query: 'test1' });
+      const response2 = await tool.handler({ query: 'test2' });
+
+      const envelope1 = JSON.parse(response1.content[0]?.text ?? '{}');
+      const envelope2 = JSON.parse(response2.content[0]?.text ?? '{}');
+
+      // Each request gets a unique request_id in meta
+      expect(envelope1.meta.request_id).toBeDefined();
+      expect(envelope2.meta.request_id).toBeDefined();
+      expect(envelope1.meta.request_id).not.toBe(envelope2.meta.request_id);
+    });
+
+    it('request_id follows UUID v4 format for stability', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      // UUID v4 format is stable and parseable
+      expect(envelope.meta.request_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Task 08.01: Error code mapping to v1 taxonomy
+  // -------------------------------------------------------------------------
+
+  describe('error code mapping (task 08.01)', () => {
+    it('maps SearxngTimeoutError to ERR_SEARXNG_TIMEOUT with retryable: true', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      (mockSearchProvider.search as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new SearxngTimeoutError('SearxNG timed out', { query: 'test' })
+      );
+
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      expect(envelope.ok).toBe(false);
+      expect(envelope.error.code).toBe(ErrorCode.ERR_SEARXNG_TIMEOUT);
+      expect(envelope.error.retryable).toBe(true);
+    });
+
+    it('maps SearxngUnavailableError to ERR_SEARXNG_UNAVAILABLE with retryable: true', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      (mockSearchProvider.search as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new SearxngUnavailableError('SearxNG unavailable', { query: 'test' })
+      );
+
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      expect(envelope.ok).toBe(false);
+      expect(envelope.error.code).toBe(ErrorCode.ERR_SEARXNG_UNAVAILABLE);
+      expect(envelope.error.retryable).toBe(true);
+    });
+
+    it('maps SearxngInvalidResponseError to ERR_SEARXNG_INVALID_RESPONSE with retryable: false', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      (mockSearchProvider.search as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new SearxngInvalidResponseError('Invalid response', { status: 500 })
+      );
+
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      expect(envelope.ok).toBe(false);
+      expect(envelope.error.code).toBe(ErrorCode.ERR_SEARXNG_INVALID_RESPONSE);
+      expect(envelope.error.retryable).toBe(false);
+    });
+
+    it('maps unknown errors to ERR_SEARXNG_UNAVAILABLE with retryable: false', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      (mockSearchProvider.search as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new Error('Unknown error')
+      );
+
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      expect(envelope.ok).toBe(false);
+      expect(envelope.error.code).toBe(ErrorCode.ERR_SEARXNG_UNAVAILABLE);
+      expect(envelope.error.retryable).toBe(false);
+    });
+
+    it('error includes message field', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      (mockSearchProvider.search as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new SearxngTimeoutError('SearxNG timed out', { query: 'test' })
+      );
+
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      expect(envelope.error.message).toBeDefined();
+      expect(typeof envelope.error.message).toBe('string');
+      expect(envelope.error.message.length).toBeGreaterThan(0);
+    });
+
+    it('error includes details when available', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      (mockSearchProvider.search as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+        new SearxngTimeoutError('SearxNG timed out', { query: 'test', duration: 5000 })
+      );
+
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      
+      expect(envelope.error.details).toBeDefined();
+      expect(envelope.error.details.query).toBe('test');
+      expect(envelope.error.details.duration).toBe(5000);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Task 08.01: Limit control with documented default
+  // -------------------------------------------------------------------------
+
+  describe('limit control (task 08.01)', () => {
+    it('applies default limit of 5 when not specified', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      await tool.handler({ query: 'test' });
+
+      // The tool passes limit to provider, so check the mock was called with limit: 5
+      expect(mockSearchProvider.search).toHaveBeenCalledWith(
+        'test',
+        expect.objectContaining({ limit: 5 })
+      );
+    });
+
+    it('passes explicit limit to provider', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      await tool.handler({ query: 'test', limit: 20 });
+
+      expect(mockSearchProvider.search).toHaveBeenCalledWith(
+        'test',
+        expect.objectContaining({ limit: 20 })
+      );
+    });
+
+    it('meta reflects applied max_results limit', async () => {
+      const tool = createSearchTool(mockSearchProvider, mockLogger);
+      const response = await tool.handler({ query: 'test', limit: 15 });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.applied_limits.max_results).toBe(15);
+    });
+
+    it('rejects limit below minimum (1)', async () => {
+      const result = SearchInputSchema.safeParse({ query: 'test', limit: 0 });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects limit above maximum (50)', async () => {
+      const result = SearchInputSchema.safeParse({ query: 'test', limit: 51 });
+      expect(result.success).toBe(false);
+    });
+
+    it('accepts limit at boundaries (1 and 50)', async () => {
+      expect(SearchInputSchema.safeParse({ query: 'test', limit: 1 })?.success).toBe(true);
+      expect(SearchInputSchema.safeParse({ query: 'test', limit: 50 })?.success).toBe(true);
     });
   });
 });
