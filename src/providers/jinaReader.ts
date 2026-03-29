@@ -36,11 +36,64 @@ export interface JinaReaderOptions {
   language?: string;
 }
 
-/** Jina Reader API response shape */
+/**
+ * Jina Reader API response shape.
+ *
+ * Public cloud endpoint (r.jina.ai) wraps the payload under `data`:
+ *   { code, status, data: { title, content, url, warning?, ... } }
+ *
+ * Self-hosted jina-ai/reader returns the flat shape directly:
+ *   { title, content, url }
+ *
+ * Both shapes are normalised in `extractJinaPayload()`.
+ */
 interface JinaReaderResponse {
+  // Flat shape (self-hosted)
+  title?: string;
+  content?: string;
+  url?: string;
+  warning?: string;
+  // Wrapped shape (public cloud)
+  code?: number;
+  status?: number;
+  data?: {
+    title?: string;
+    content?: string;
+    url?: string;
+    warning?: string;
+  };
+}
+
+/** Normalise both Jina response shapes into a single flat payload. */
+function extractJinaPayload(raw: JinaReaderResponse): {
   title?: string;
   content: string;
   url: string;
+  warning?: string;
+} {
+  // Wrapped shape: public cloud { code, data: { ... } }
+  if (raw.data && typeof raw.data === 'object') {
+    const d = raw.data;
+    if (typeof d.content !== 'string') {
+      throw new Error('Jina Reader response missing content field (wrapped shape)');
+    }
+    return {
+      title:   d.title,
+      content: d.content,
+      url:     d.url ?? '',
+      warning: d.warning,
+    };
+  }
+  // Flat shape: self-hosted { title, content, url }
+  if (typeof raw.content !== 'string') {
+    throw new Error('Jina Reader response missing content field');
+  }
+  return {
+    title:   raw.title,
+    content: raw.content,
+    url:     raw.url ?? '',
+    warning: raw.warning,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -140,8 +193,10 @@ export class JinaReaderProvider {
       if (options.language) params.append('language', options.language);
       const fullUrl = params.toString() ? `${readerUrl}?${params.toString()}` : readerUrl;
 
-      // API key header if configured
-      const headers: Record<string, string> = {};
+      // Headers: request JSON response from Jina (public cloud returns Markdown by default)
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+      };
       if (this.config.apiKey) {
         headers['Authorization'] = `Bearer ${this.config.apiKey}`;
       }
@@ -158,16 +213,28 @@ export class JinaReaderProvider {
         headers,
       });
 
-      // Validate response
-      const data = response.body as JinaReaderResponse;
-      if (typeof data?.content !== 'string') {
+      // Normalise response — handles both wrapped (public cloud) and flat (self-hosted) shapes
+      const raw = response.body as JinaReaderResponse;
+      let payload: ReturnType<typeof extractJinaPayload>;
+      try {
+        payload = extractJinaPayload(raw);
+      } catch {
         throw new ReaderInvalidResponseError(
           'Jina Reader response missing content field',
           { url, status: response.status }
         );
       }
 
-      const rawContent = data.content;
+      // Surface provider warning into logs (e.g. cached snapshot notice)
+      if (payload.warning) {
+        this.logger.warn('Jina Reader provider warning', {
+          component: 'JinaReaderProvider',
+          url,
+          warning: payload.warning,
+        });
+      }
+
+      const rawContent = payload.content;
       const duration = Date.now() - startTime;
 
       // Determine if truncation is needed
@@ -204,7 +271,7 @@ export class JinaReaderProvider {
 
       const result: ReadResult = {
         url,
-        title: data.title,
+        title: payload.title,
         excerpt,
         content,
         content_mode: contentMode,

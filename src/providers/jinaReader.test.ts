@@ -158,14 +158,79 @@ describe('JinaReaderProvider', () => {
         `https://r.jina.ai/${TEST_URL}?language=en`,
         expect.objectContaining({
           timeout: 15000,
-          headers: { Authorization: 'Bearer secret-key' },
+          headers: expect.objectContaining({
+            'Accept': 'application/json',
+            'Authorization': 'Bearer secret-key',
+          }),
         })
       );
     });
   });
 
+  describe('public cloud wrapped response shape (r.jina.ai)', () => {
+    it('handles { code, data: { title, content, url } } envelope', async () => {
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: {
+          code: 200,
+          status: 20000,
+          data: {
+            title: 'Test Article',
+            content: FULL_CONTENT,
+            url: TEST_URL,
+          },
+        },
+      });
+
+      const result = await provider.read(TEST_URL);
+
+      expect(result.content_mode).toBe('full');
+      expect(result.content_truncated).toBe(false);
+      expect(result.content).toBe(FULL_CONTENT);
+      expect(result.title).toBe('Test Article');
+    });
+
+    it('logs a warning when the provider includes a warning field', async () => {
+      const warnFn = vi.fn();
+      const warnLogger = {
+        debug: vi.fn(), info: vi.fn(), warn: warnFn, error: vi.fn(),
+      } as unknown as Logger;
+      const warnProvider = new JinaReaderProvider(createConfig(), mockHttpClient, warnLogger);
+
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: {
+          code: 200,
+          status: 20000,
+          data: {
+            title: 'Cached Page',
+            content: FULL_CONTENT,
+            url: TEST_URL,
+            warning: 'This is a cached snapshot.',
+          },
+        },
+      });
+
+      await warnProvider.read(TEST_URL);
+
+      expect(warnFn).toHaveBeenCalledWith(
+        'Jina Reader provider warning',
+        expect.objectContaining({ warning: 'This is a cached snapshot.' })
+      );
+    });
+
+    it('throws ReaderInvalidResponseError when wrapped data.content is missing', async () => {
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: { code: 200, status: 20000, data: { url: TEST_URL, title: 'Broken' } },
+      });
+
+      await expect(provider.read(TEST_URL)).rejects.toBeInstanceOf(ReaderInvalidResponseError);
+    });
+  });
+
   describe('error mapping', () => {
-    it('throws ReaderInvalidResponseError when content is missing', async () => {
+    it('throws ReaderInvalidResponseError when content is missing (flat shape)', async () => {
       (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
         status: 200,
         body: { url: TEST_URL, title: 'Broken' },
