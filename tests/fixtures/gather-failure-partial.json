@@ -1,0 +1,21 @@
+{
+  "_fixture": "gather-failure-partial",
+  "_description": "Canonical v1 gather failure — search returned no results (ERR_GATHER_NO_SOURCES). meta must be present.",
+  "schema_version": "1",
+  "ok": false,
+  "meta": {
+    "request_id": "bc77ebaf-1b1c-4fbf-a942-25c9964a6794",
+    "timestamp": "2026-03-31T10:00:06.000Z",
+    "provider_id": "orchestrator",
+    "provider_name": "Orchestrator",
+    "applied_limits": {
+      "timeout_ms": 10000,
+      "max_results": 5
+    }
+  },
+  "error": {
+    "code": "ERR_GATHER_NO_SOURCES",
+    "message": "Search returned no results — cannot gather content",
+    "retryable": false
+  }
+}

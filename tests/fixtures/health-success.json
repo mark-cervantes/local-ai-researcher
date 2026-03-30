@@ -1,0 +1,39 @@
+{
+  "_fixture": "health-success",
+  "_description": "Canonical v1 health success — both providers connected, status healthy.",
+  "schema_version": "1",
+  "ok": true,
+  "meta": {
+    "request_id": "7cc37e09-b027-4e48-bb57-61fd45f6cbf2",
+    "timestamp": "2026-03-31T10:00:07.000Z",
+    "provider_id": "health",
+    "provider_name": "Health Check",
+    "applied_limits": {}
+  },
+  "result": {
+    "status": "healthy",
+    "mcp": {
+      "stdio": {
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "servers": [
+        {
+          "name": "SearxNG",
+          "status": "connected",
+          "latency_ms": 42
+        },
+        {
+          "name": "Jina Reader",
+          "status": "connected",
+          "latency_ms": 38
+        }
+      ]
+    },
+    "resources": {
+      "memoryMB": 64,
+      "cwd": "/home/cmark/projects/local-ai-researcher"
+    },
+    "timestamp": "2026-03-31T10:00:07.000Z"
+  }
+}

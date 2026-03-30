@@ -1,0 +1,29 @@
+{
+  "_fixture": "read-success-truncated",
+  "_description": "Canonical v1 read success with truncation — content_mode is 'full' but provider limit was hit. content_truncated must be true and truncation object must be present.",
+  "schema_version": "1",
+  "ok": true,
+  "meta": {
+    "request_id": "78995665-6b8f-4ef5-8ab7-fe37b74040e2",
+    "timestamp": "2026-03-31T10:00:03.000Z",
+    "provider_id": "jina-reader",
+    "provider_name": "Jina Reader",
+    "applied_limits": {
+      "timeout_ms": 15000
+    }
+  },
+  "result": {
+    "url": "https://example.com/very-long-article",
+    "title": "Very Long Article",
+    "excerpt": "This is a short preview of the article content.",
+    "content": "This is a truncated version of the full content...",
+    "content_mode": "full",
+    "content_truncated": true,
+    "truncation": {
+      "applied_limit": 50000,
+      "reason": "provider_limit"
+    },
+    "wordCount": 10,
+    "duration": 150
+  }
+}

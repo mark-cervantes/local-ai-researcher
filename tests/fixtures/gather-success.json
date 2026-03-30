@@ -1,0 +1,84 @@
+{
+  "_fixture": "gather-success",
+  "_description": "Canonical v1 gather success — 3 search results, 2 successful reads, 1 deduped URL, full content mode.",
+  "schema_version": "1",
+  "ok": true,
+  "meta": {
+    "request_id": "b0d75edb-919c-42fa-8b30-80cbbafb0013",
+    "timestamp": "2026-03-31T10:00:05.000Z",
+    "provider_id": "orchestrator",
+    "provider_name": "Orchestrator",
+    "applied_limits": {
+      "timeout_ms": 10000,
+      "max_results": 5
+    }
+  },
+  "result": {
+    "id": "g7h8i9j0-k1l2-4m3n-4o5p-6q7r8s9t0u1v",
+    "prompt": "example research query",
+    "context": {
+      "sources": [
+        { "type": "web", "target": "https://example.com/article1" },
+        { "type": "web", "target": "https://example.com/article2" },
+        { "type": "web", "target": "https://example.com/article3" }
+      ],
+      "results": [
+        {
+          "id": "sr-001",
+          "url": "https://example.com/article1",
+          "title": "Article One",
+          "excerpt": "Excerpt from article one.",
+          "source": "web"
+        },
+        {
+          "id": "sr-002",
+          "url": "https://example.com/article2",
+          "title": "Article Two",
+          "excerpt": "Excerpt from article two.",
+          "source": "web"
+        },
+        {
+          "id": "sr-003",
+          "url": "https://example.com/article3",
+          "title": "Article Three",
+          "excerpt": "Excerpt from article three.",
+          "source": "web"
+        }
+      ],
+      "reads": [
+        {
+          "url": "https://example.com/article1",
+          "title": "Article One",
+          "excerpt": "Excerpt from article one.",
+          "content": "Full content of article one.",
+          "content_mode": "full",
+          "content_truncated": false,
+          "wordCount": 6,
+          "duration": 90
+        },
+        {
+          "url": "https://example.com/article2",
+          "title": "Article Two",
+          "excerpt": "Excerpt from article two.",
+          "content": "Full content of article two.",
+          "content_mode": "full",
+          "content_truncated": false,
+          "wordCount": 6,
+          "duration": 95
+        }
+      ],
+      "dedupStats": {
+        "total": 3,
+        "deduped": 1
+      }
+    },
+    "synthesis": "## Research Results for: example research query\n\nFound 3 result(s).\n\n### [1] Article One\nURL: https://example.com/article1\n\nExcerpt from article one.\n",
+    "summary": {
+      "totalResults": 3,
+      "attemptedReads": 2,
+      "successfulReads": 2,
+      "failedReads": 0,
+      "totalDuration": 185
+    }
+  }
+}

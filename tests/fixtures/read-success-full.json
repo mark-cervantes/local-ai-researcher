@@ -1,0 +1,25 @@
+{
+  "_fixture": "read-success-full",
+  "_description": "Canonical v1 read success — full content (no truncation). This is the v1 default: content_mode must be 'full', content_truncated must be false, truncation must be absent.",
+  "schema_version": "1",
+  "ok": true,
+  "meta": {
+    "request_id": "be6e1caf-98ca-4302-b059-2a05487d56ed",
+    "timestamp": "2026-03-31T10:00:02.000Z",
+    "provider_id": "jina-reader",
+    "provider_name": "Jina Reader",
+    "applied_limits": {
+      "timeout_ms": 15000
+    }
+  },
+  "result": {
+    "url": "https://example.com/article-about-topic",
+    "title": "Article About Topic",
+    "excerpt": "This is a short preview of the article content.",
+    "content": "This is the full content of the article. It contains multiple paragraphs and represents the complete text as extracted by the Jina Reader provider without any truncation applied.",
+    "content_mode": "full",
+    "content_truncated": false,
+    "wordCount": 37,
+    "duration": 120
+  }
+}
