@@ -119,3 +119,14 @@ As a maintainer, I want the tool factories and server composition typed against 
 4. **ESM import path suffix**: Use `.js` extension in import paths even for `.ts` source files: `from '../providers/interfaces.js'`. This is required for ESM compatibility in this project.
 
 5. **Type-only imports preferred**: Since runtime behavior doesn't change, use `import type { ... }` for interface imports. This ensures interfaces are erased at compile time and don't affect bundle size.
+
+---
+
+## Changes
+- `src/tools/search.ts` — modified (SearchProvider interface, provider.id/name wiring)
+- `src/tools/read.ts` — modified (ReaderProvider interface, provider.id/name wiring)
+- `src/tools/gather.ts` — modified (SearchProvider + ReaderProvider interfaces)
+- `src/tools/health.ts` — modified (SearchProvider + ReaderProvider interfaces, nullable preserved)
+- `src/tools/search.test.ts` — modified (mock updated with id/name to match interface)
+- `src/tools/read.test.ts` — modified (mock updated with id/name to match interface)
+- `src/tools/provider-contract.test.ts` — new (from QA task)
