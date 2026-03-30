@@ -272,8 +272,14 @@ export interface GatherOptions {
 /** MCP provider health entry */
 export interface ProviderHealthEntry {
   name: string;
-  status: 'connected' | 'error';
+  /** Provider connectivity status */
+  status: 'connected' | 'degraded' | 'unavailable' | 'error';
+  /** Round-trip latency in milliseconds (present when a real probe was made) */
+  latency_ms?: number;
+  /** Human-readable error description */
   error?: string;
+  /** Locked v1 error code from taxonomy (e.g., ERR_SSRF_BLOCKED) */
+  error_code?: string;
 }
 
 /** Health check result — locked v1 contract */

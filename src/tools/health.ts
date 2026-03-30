@@ -11,7 +11,7 @@ import type { HealthResult, ProviderHealthEntry, ResponseMeta } from '../domain/
 import { SCHEMA_VERSION } from '../domain/types.js';
 import type { SearxngProvider } from '../providers/searxng.js';
 import type { JinaReaderProvider } from '../providers/jinaReader.js';
-import { ResearcherError } from '../lib/errors.js';
+import { ResearcherError, SsrfError } from '../lib/errors.js';
 import { Logger } from '../lib/logger.js';
 import type { ToolResponseEnvelope } from '../domain/types.js';
 
@@ -83,21 +83,25 @@ export function createHealthTool(
         if (input.provider === 'searxng' || input.provider === 'all') {
           if (searxngProvider) {
             try {
-              const healthy = await searxngProvider.isHealthy();
+              const health = await searxngProvider.checkHealth();
               servers.push({
                 name: searxngProvider.name,
-                status: healthy ? 'connected' : 'error',
-                error: healthy ? undefined : 'Health check returned unhealthy',
+                status: health.status,
+                latency_ms: health.latency_ms,
+                error: health.error,
+                error_code: health.error_code,
               });
             } catch (error) {
+              // checkHealth() should not throw — this is a defensive fallback
               servers.push({
                 name: searxngProvider.name,
-                status: 'error',
+                status: error instanceof SsrfError ? 'error' : 'unavailable',
                 error: error instanceof Error ? error.message : 'Unknown error',
+                error_code: error instanceof SsrfError ? error.code : undefined,
               });
             }
           } else {
-            servers.push({ name: 'SearxNG', status: 'error', error: 'Not configured' });
+            servers.push({ name: 'SearxNG', status: 'unavailable', error: 'Not configured' });
           }
         }
 
