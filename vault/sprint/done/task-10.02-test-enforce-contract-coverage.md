@@ -86,3 +86,9 @@ As the release team, I want contract coverage for gather and health so that the 
 - This is a QA-owned task (assignee: qa) — do not implement, only write tests
 - Tests should fail if schema changes after freeze (detect drift)
 - Integration tests require live provider access; mark as separate from unit contract tests
+
+## Changes
+
+- Added contract coverage for `gather` fixture conformance, dedup reporting, AI-ingestible payloads, full-content default behavior, and failure envelopes.
+- Added contract coverage for `health` fixture conformance, overall readiness rollup, per-provider latency, and degraded/unhealthy provider-state combinations.
+- Verified the frozen v1 schema holds without further implementation changes.
