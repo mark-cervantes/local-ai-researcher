@@ -117,3 +117,25 @@ Tests:  PASS — 463/463
 Lint:   PASS — placeholder script
 Status: CLEAN
 Gate:   PASS
+
+## Wave 4.5 - Provider Interface Refactor
+
+| ID | Title | Type | Cx | Depends | Parallel With |
+|----|-------|------|----|---------|---------------|
+| 13.01 | Define provider interfaces and align concrete providers | refactor | M | - | - |
+| 13.02 | Retype tool factories to provider contracts | refactor | M | 13.01 | - |
+
+### Dependency Addendum
+
+```text
+13.01 -> 13.02
+```
+
+### Critical Path Addendum
+
+`13.01 -> 13.02`
+
+### Parallelism Notes
+
+- No safe parallel split is planned inside Wave 4.5 because the tool-layer typing depends on the shared provider contract being established first.
+- Wave 4.5 is intentionally behavior-neutral and should preserve the same passing build and test gates recorded for Wave 4.
