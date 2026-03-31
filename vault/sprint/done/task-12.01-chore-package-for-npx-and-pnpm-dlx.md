@@ -83,3 +83,9 @@ As an OpenCode user, I want to launch the server through `npx` or `pnpm dlx` so 
 - ESM vs CJS: ensure Node.js resolution works correctly
 - If using bundler (esbuild, etc.), verify all dependencies are bundled or properly external
 - Test against clean node_modules to catch missing dependency declarations
+
+---
+
+## Changes
+- `package.json` — modified (added files field: ["dist", "README.md", "LICENSE"])
+- `src/packaging.test.ts` — new (18 packaging config tests)

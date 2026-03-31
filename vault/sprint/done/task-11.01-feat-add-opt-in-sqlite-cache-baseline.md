@@ -81,3 +81,13 @@ As an operator, I want to enable SQLite caching only when I choose to so that th
 - `gather` cache key is complex (query + options); consider caching constituent reads separately
 - SQLite concurrent access: use WAL mode or appropriate locking for Node.js single-threaded model
 - Cache should not store error responses (or store with short TTL)
+
+---
+
+## Changes
+- `src/lib/cache.ts` — new (SQLite cache module, Cache class)
+- `src/lib/cache.test.ts` — new (22 unit tests)
+- `src/config.test.ts` — new (9 cache config tests)
+- `src/config.ts` — modified (cache sub-config in loadConfig)
+- `src/domain/types.ts` — modified (CacheConfig, cache on Config, cache_hit/cache_key on ResponseMeta)
+- `src/types/node-sqlite.d.ts` — new (TypeScript declarations)
