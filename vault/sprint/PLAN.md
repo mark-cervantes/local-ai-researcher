@@ -41,6 +41,7 @@ This sprint plan replaces the legacy execution story with the canonical Research
 | 11.01 | Add opt-in SQLite cache baseline | feat | M | 10.01 | 12.01 |
 | 11.02 | Add cache bypass and observability rules | feat | S | 11.01 | 12.01 |
 | 12.01 | Package for `npx` and `pnpm dlx` launch | chore | M | 10.01 | 11.01, 11.02 |
+| 12.03 | Add SearXNG bootstrap launch flow | feat | M | 12.01 | 11.01, 11.02 |
 
 ## Wave 6 - Release Readiness
 
@@ -57,7 +58,7 @@ This sprint plan replaces the legacy execution story with the canonical Research
                   -> 09.01
 
 08.01 + 09.01 -> 10.01 -> 11.01 -> 11.02
-                         -> 12.01 -> 12.02
+                         -> 12.01 -> 12.03 -> 12.02
 10.01 -> 10.02
 ```
 

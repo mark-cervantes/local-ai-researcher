@@ -7,7 +7,7 @@ complexity: M
 difficulty: moderate
 sprint: 5
 depends_on: ["10.01"]
-blocks: ["12.02"]
+blocks: ["12.02", "12.03"]
 parent: "12"
 branch: "feat/task-12-packaging-release-readiness"
 assignee: dev
@@ -38,6 +38,7 @@ As an OpenCode user, I want to launch the server through `npx` or `pnpm dlx` so 
 ### Out of Scope
 - Release notes and operator guide content.
 - Optional cache documentation beyond what is needed for packaging correctness.
+- SearXNG bootstrap script and docker-compose.yml (covered in task 12.03).
 
 ---
 <!-- TECHNICAL GUIDANCE - written by Tech Lead below this line -->
