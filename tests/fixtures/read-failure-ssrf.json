@@ -1,0 +1,24 @@
+{
+  "_fixture": "read-failure-ssrf",
+  "_description": "Canonical v1 read failure — SSRF blocked. meta must be present for traceability even on security errors.",
+  "schema_version": "1",
+  "ok": false,
+  "meta": {
+    "request_id": "8d113736-fd42-4f94-92f3-87a78421e67d",
+    "timestamp": "2026-03-31T10:00:04.000Z",
+    "provider_id": "jina-reader",
+    "provider_name": "Jina Reader",
+    "applied_limits": {
+      "timeout_ms": 15000
+    }
+  },
+  "error": {
+    "code": "ERR_SSRF_BLOCKED",
+    "message": "SSRF blocked: request targets a private network address",
+    "retryable": false,
+    "details": {
+      "url": "http://192.168.1.1/admin",
+      "reason": "private network"
+    }
+  }
+}

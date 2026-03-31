@@ -85,3 +85,13 @@ As the release team, I want one frozen v1 response contract so that validation, 
 - **Blocking task:** Cache (11.x) and packaging (12.x) cannot proceed until this freeze is complete
 - Fixture URLs should use stable, long-lived test targets or synthetic data
 - Error fixtures must preserve `meta` for traceability — verify this explicitly
+
+## Changes
+
+- Files modified:
+  - `src/tools/search.ts` — replaced `fullText:boolean` with `content_mode:'full'|'excerpt'` (default: 'full'), updated tool description
+  - `src/domain/types.ts` — added runtime type guards: `isToolResponseEnvelope`, `isSearchResult`, `isReadResult`, `isResponseMeta`
+  - `src/tools/search.test.ts` — updated default values test to use `content_mode` instead of legacy `fullText`
+- Tests run: `npx vitest run` → 413 tests passed, 0 failures
+- Result: All 8 previously failing tests now pass
+- Deviations from Technical Guidance: none

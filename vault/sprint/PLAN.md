@@ -41,6 +41,7 @@ This sprint plan replaces the legacy execution story with the canonical Research
 | 11.01 | Add opt-in SQLite cache baseline | feat | M | 10.01 | 12.01 |
 | 11.02 | Add cache bypass and observability rules | feat | S | 11.01 | 12.01 |
 | 12.01 | Package for `npx` and `pnpm dlx` launch | chore | M | 10.01 | 11.01, 11.02 |
+| 12.03 | Add SearXNG bootstrap launch flow | feat | M | 12.01 | 11.01, 11.02 |
 
 ## Wave 6 - Release Readiness
 
@@ -57,7 +58,7 @@ This sprint plan replaces the legacy execution story with the canonical Research
                   -> 09.01
 
 08.01 + 09.01 -> 10.01 -> 11.01 -> 11.02
-                         -> 12.01 -> 12.02
+                         -> 12.01 -> 12.03 -> 12.02
 10.01 -> 10.02
 ```
 
@@ -85,3 +86,73 @@ This is the minimum serial chain because the reader lane carries the largest beh
 - Every backlog task below maps to the canonical RMCP wave structure and keeps traceability through `rmcp_id`.
 - Dependencies are explicit enough for later tech-lead enrichment and orchestrator dispatch.
 - No product code, docs under `docs/`, or files under `vault/ai/docs/` are changed by this planning refresh.
+
+## Integration [Wave 2] — 2026-03-27
+Commands: tsc | vitest run | (lint: placeholder skipped)
+Build:  PASS
+Tests:  PASS — 228/228
+Lint:   SKIPPED — not configured
+Status: CLEAN
+Gate:   PASS
+
+## Integration [Wave 3] — 2026-03-29
+Commands: pnpm typecheck | pnpm test | (lint: placeholder skipped)
+Build:  PASS
+Tests:  PASS — 289/289
+Lint:   SKIPPED — not configured
+Status: CLEAN
+Gate:   PASS
+
+## Integration [Wave 3] — 2026-03-31
+Commands: npm run build | npm test | npm run lint
+Build:  PASS
+Tests:  PASS — 310/310
+Lint:   PASS — placeholder script
+Status: CLEAN
+Gate:   PASS
+
+## Integration [Wave 4] — 2026-03-31
+Commands: npm run build | npm test | npm run lint
+Build:  PASS
+Tests:  PASS — 463/463
+Lint:   PASS — placeholder script
+Status: CLEAN
+Gate:   PASS
+
+## Wave 4.5 - Provider Interface Refactor
+
+| ID | Title | Type | Cx | Depends | Parallel With |
+|----|-------|------|----|---------|---------------|
+| 13.01 | Define provider interfaces and align concrete providers | refactor | M | - | - |
+| 13.02 | Retype tool factories to provider contracts | refactor | M | 13.01 | - |
+
+### Dependency Addendum
+
+```text
+13.01 -> 13.02
+```
+
+### Critical Path Addendum
+
+`13.01 -> 13.02`
+
+### Parallelism Notes
+
+- No safe parallel split is planned inside Wave 4.5 because the tool-layer typing depends on the shared provider contract being established first.
+- Wave 4.5 is intentionally behavior-neutral and should preserve the same passing build and test gates recorded for Wave 4.
+
+## Integration [Wave 4.5] — 2026-03-31
+Commands: npm run build | npm test | npm run lint
+Build:  PASS
+Tests:  PASS — 498/498
+Lint:   PASS — placeholder script
+Status: CLEAN
+Gate:   PASS
+
+## Integration [Wave 5] — 2026-03-31
+Commands: npm run build | npm test | npm run lint
+Build:  PASS
+Tests:  PASS — 589/589
+Lint:   PASS — placeholder script
+Status: CLEAN
+Gate:   PASS

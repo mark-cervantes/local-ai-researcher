@@ -3,17 +3,19 @@
  *
  * Boundary contract:
  * - Outputs normalized ReadResult domain objects (no provider-specific leakage).
- * - Excerpt-first model: `excerpt` always populated (30-line default).
- * - Full text in `content` only when fullText opt-in is passed.
+ * - Full-content model: `content` is populated by default; truncation is explicit.
  * - Throws typed error codes from the locked taxonomy (ERR_READER_*).
  */
 
-import type { ReadResult, JinaReaderConfig } from '../domain/types.js';
+import type { ReadResult, JinaReaderConfig, ContentMode, ContentTruncation } from '../domain/types.js';
 import { HttpClient } from '../lib/http.js';
+import type { ReaderProvider, ProviderHealth } from './interfaces.js';
 import {
   ReaderTimeoutError,
   ReaderUnavailableError,
   ReaderInvalidResponseError,
+  SsrfError,
+  ErrorCode,
 } from '../lib/errors.js';
 import { TimeoutError } from '../lib/errors.js';
 import { Logger } from '../lib/logger.js';
@@ -25,23 +27,76 @@ import { Logger } from '../lib/logger.js';
 /** Jina Reader request options */
 export interface JinaReaderOptions {
   /**
-   * Return full text or excerpt only.
-   * Locked v1 default: excerpt (30 lines).
+   * Content mode: 'full' returns full content, 'excerpt' returns truncated preview.
+   * Default: 'full' (full-content-by-default model).
    */
-  fullText?: boolean;
+  content_mode?: ContentMode;
 
-  /** Target word count for excerpt trimming (overrides 30-line default) */
+  /** Target word count for excerpt trimming (only used when content_mode: 'excerpt') */
   targetWords?: number;
 
   /** Language hint for Jina Reader (optional) */
   language?: string;
 }
 
-/** Jina Reader API response shape */
+/**
+ * Jina Reader API response shape.
+ *
+ * Public cloud endpoint (r.jina.ai) wraps the payload under `data`:
+ *   { code, status, data: { title, content, url, warning?, ... } }
+ *
+ * Self-hosted jina-ai/reader returns the flat shape directly:
+ *   { title, content, url }
+ *
+ * Both shapes are normalised in `extractJinaPayload()`.
+ */
 interface JinaReaderResponse {
+  // Flat shape (self-hosted)
+  title?: string;
+  content?: string;
+  url?: string;
+  warning?: string;
+  // Wrapped shape (public cloud)
+  code?: number;
+  status?: number;
+  data?: {
+    title?: string;
+    content?: string;
+    url?: string;
+    warning?: string;
+  };
+}
+
+/** Normalise both Jina response shapes into a single flat payload. */
+function extractJinaPayload(raw: JinaReaderResponse): {
   title?: string;
   content: string;
   url: string;
+  warning?: string;
+} {
+  // Wrapped shape: public cloud { code, data: { ... } }
+  if (raw.data && typeof raw.data === 'object') {
+    const d = raw.data;
+    if (typeof d.content !== 'string') {
+      throw new Error('Jina Reader response missing content field (wrapped shape)');
+    }
+    return {
+      title:   d.title,
+      content: d.content,
+      url:     d.url ?? '',
+      warning: d.warning,
+    };
+  }
+  // Flat shape: self-hosted { title, content, url }
+  if (typeof raw.content !== 'string') {
+    throw new Error('Jina Reader response missing content field');
+  }
+  return {
+    title:   raw.title,
+    content: raw.content,
+    url:     raw.url ?? '',
+    warning: raw.warning,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -67,7 +122,7 @@ function firstWords(text: string, targetWords: number): string {
 // ---------------------------------------------------------------------------
 
 /** Jina Reader provider */
-export class JinaReaderProvider {
+export class JinaReaderProvider implements ReaderProvider {
   private config: JinaReaderConfig;
   private httpClient: HttpClient;
   private logger: Logger;
@@ -76,6 +131,10 @@ export class JinaReaderProvider {
     this.config = config;
     this.httpClient = httpClient;
     this.logger = logger;
+  }
+
+  get id(): string {
+    return 'jina-reader';
   }
 
   get name(): string {
@@ -104,6 +163,86 @@ export class JinaReaderProvider {
   }
 
   /**
+   * Probe Jina Reader and return structured readiness with latency.
+   *
+   * Status semantics:
+   * - `connected`   — endpoint responded 200; reader lane is ready.
+   * - `degraded`    — endpoint responded but slowly (>2000ms).
+   * - `unavailable` — connection failed, timed out, or returned non-success status.
+   * - `error`       — request was blocked by SSRF protection; treat as configuration
+   *                   problem (error_code: ERR_SSRF_BLOCKED).
+   *
+   * The existing {@link isHealthy} method is kept for backward compatibility.
+   *
+   * @returns Structured health result with latency and optional error info
+   */
+  async checkHealth(): Promise<ProviderHealth> {
+    const startTime = Date.now();
+
+    try {
+      const testUrl = `${this.config.endpoint}https://example.com`;
+      const response = await this.httpClient.get(testUrl, {
+        timeout: 5000,
+        retry: false,
+      });
+      const latency_ms = Date.now() - startTime;
+
+      if (response.status === 200) {
+        // Check if response was slow (>2000ms)
+        const status = latency_ms > 2000 ? 'degraded' : 'connected';
+        this.logger.debug('Jina Reader checkHealth: connected', {
+          component: 'JinaReaderProvider',
+          latency_ms,
+          status: response.status,
+        });
+        return { status, latency_ms };
+      }
+
+      // Non-OK status code — treat as unavailable
+      this.logger.warn('Jina Reader checkHealth: unexpected status', {
+        component: 'JinaReaderProvider',
+        latency_ms,
+        httpStatus: response.status,
+      });
+      return {
+        status: 'unavailable',
+        latency_ms,
+        error: `Unexpected HTTP status: ${response.status}`,
+      };
+    } catch (error) {
+      const latency_ms = Date.now() - startTime;
+
+      // SSRF-blocked requests are a configuration problem, not a connectivity problem
+      if (error instanceof SsrfError) {
+        this.logger.warn('Jina Reader checkHealth: SSRF blocked', {
+          component: 'JinaReaderProvider',
+          latency_ms,
+          error: error.message,
+        });
+        return {
+          status: 'error',
+          latency_ms,
+          error: error.message,
+          error_code: ErrorCode.ERR_SSRF_BLOCKED,
+        };
+      }
+
+      // Any other error (network failure, timeout, etc.) = unavailable
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn('Jina Reader checkHealth: unavailable', {
+        component: 'JinaReaderProvider',
+        latency_ms,
+        error: message,
+      });
+      return {
+        status: 'unavailable',
+        latency_ms,
+        error: message,
+      };
+    }
+  }
+
+  /**
    * Check if a URL can be read by this provider.
    * Only http/https URLs are supported.
    */
@@ -119,9 +258,9 @@ export class JinaReaderProvider {
   /**
    * Read content from a URL via Jina Reader.
    *
-   * Excerpt-first model (locked v1):
-   * - `excerpt` always set to first 30 lines (or `targetWords` words if specified).
-   * - `content` only set when `fullText: true`.
+   * Full-content model (locked v1):
+   * - `content` is populated by default.
+   * - `content_mode: 'excerpt'` returns truncated content with metadata.
    *
    * @param url - URL to fetch
    * @param options - Read options
@@ -130,6 +269,7 @@ export class JinaReaderProvider {
    */
   async read(url: string, options: JinaReaderOptions = {}): Promise<ReadResult> {
     const startTime = Date.now();
+    const contentMode: ContentMode = options.content_mode ?? 'full';
 
     try {
       // Jina Reader URL format: <endpoint><target-url>
@@ -140,8 +280,10 @@ export class JinaReaderProvider {
       if (options.language) params.append('language', options.language);
       const fullUrl = params.toString() ? `${readerUrl}?${params.toString()}` : readerUrl;
 
-      // API key header if configured
-      const headers: Record<string, string> = {};
+      // Headers: request JSON response from Jina (public cloud returns Markdown by default)
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+      };
       if (this.config.apiKey) {
         headers['Authorization'] = `Bearer ${this.config.apiKey}`;
       }
@@ -150,7 +292,7 @@ export class JinaReaderProvider {
         component: 'JinaReaderProvider',
         url,
         readerUrl: fullUrl,
-        fullText: options.fullText ?? false,
+        content_mode: contentMode,
       });
 
       const response = await this.httpClient.get(fullUrl, {
@@ -158,29 +300,70 @@ export class JinaReaderProvider {
         headers,
       });
 
-      // Validate response
-      const data = response.body as JinaReaderResponse;
-      if (typeof data?.content !== 'string') {
+      // Normalise response — handles both wrapped (public cloud) and flat (self-hosted) shapes
+      const raw = response.body as JinaReaderResponse;
+      let payload: ReturnType<typeof extractJinaPayload>;
+      try {
+        payload = extractJinaPayload(raw);
+      } catch {
         throw new ReaderInvalidResponseError(
           'Jina Reader response missing content field',
           { url, status: response.status }
         );
       }
 
-      const rawContent = data.content;
+      // Surface provider warning into logs (e.g. cached snapshot notice)
+      if (payload.warning) {
+        this.logger.warn('Jina Reader provider warning', {
+          component: 'JinaReaderProvider',
+          url,
+          warning: payload.warning,
+        });
+      }
+
+      const rawContent = payload.content;
       const duration = Date.now() - startTime;
 
-      // Excerpt-first: always compute excerpt
+      // Determine if truncation is needed
+      let content: string;
+      let contentTruncated = false;
+      let truncation: ContentTruncation | undefined;
+
+      if (contentMode === 'excerpt') {
+        // Apply truncation for excerpt mode
+        const truncatedContent = options.targetWords
+          ? firstWords(rawContent, options.targetWords)
+          : firstLines(rawContent, 30);
+        
+        content = truncatedContent;
+        
+        // Check if truncation actually occurred
+        if (truncatedContent !== rawContent) {
+          contentTruncated = true;
+          truncation = {
+            applied_limit: options.targetWords ?? 30,
+            reason: 'explicit_excerpt',
+          };
+        }
+      } else {
+        // Full content mode - use raw content
+        content = rawContent;
+        // Note: Could add provider_limit detection here if Jina truncates
+      }
+
+      // Always compute excerpt for backwards compatibility
       const excerpt = options.targetWords
         ? firstWords(rawContent, options.targetWords)
         : firstLines(rawContent, 30);
 
       const result: ReadResult = {
         url,
-        title: data.title,
+        title: payload.title,
         excerpt,
-        // Full text only when explicitly requested
-        content: options.fullText ? rawContent : undefined,
+        content,
+        content_mode: contentMode,
+        content_truncated: contentTruncated,
+        truncation,
         wordCount: rawContent.split(/\s+/).filter(Boolean).length,
         duration,
       };
@@ -190,6 +373,8 @@ export class JinaReaderProvider {
         url,
         wordCount: result.wordCount,
         duration,
+        content_mode: contentMode,
+        content_truncated: contentTruncated,
       });
 
       return result;

@@ -5,12 +5,12 @@
  * Output matches the locked HealthResult contract from the PRD.
  */
 
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import type { HealthResult, ProviderHealthEntry } from '../domain/types.js';
+import type { HealthResult, ProviderHealthEntry, ResponseMeta } from '../domain/types.js';
 import { SCHEMA_VERSION } from '../domain/types.js';
-import type { SearxngProvider } from '../providers/searxng.js';
-import type { JinaReaderProvider } from '../providers/jinaReader.js';
-import { ResearcherError } from '../lib/errors.js';
+import type { SearchProvider, ReaderProvider } from '../providers/interfaces.js';
+import { ResearcherError, SsrfError } from '../lib/errors.js';
 import { Logger } from '../lib/logger.js';
 import type { ToolResponseEnvelope } from '../domain/types.js';
 
@@ -40,8 +40,8 @@ export type HealthInput = z.infer<typeof HealthInputSchema>;
  * @param logger - Logger
  */
 export function createHealthTool(
-  searxngProvider: SearxngProvider | null,
-  jinaReaderProvider: JinaReaderProvider | null,
+  searxngProvider: SearchProvider | null,
+  jinaReaderProvider: ReaderProvider | null,
   logger: Logger
 ) {
   return {
@@ -58,10 +58,21 @@ export function createHealthTool(
       params: unknown
     ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
       const input = HealthInputSchema.parse(params);
+      const requestId = randomUUID();
+      const timestamp = new Date().toISOString();
+
+      const meta: ResponseMeta = {
+        request_id: requestId,
+        timestamp,
+        provider_id: 'health',
+        provider_name: 'Health Check',
+        applied_limits: {},
+      };
 
       logger.info('Health tool invoked', {
         component: 'health',
         provider: input.provider,
+        request_id: requestId,
       });
 
       try {
@@ -71,21 +82,25 @@ export function createHealthTool(
         if (input.provider === 'searxng' || input.provider === 'all') {
           if (searxngProvider) {
             try {
-              const healthy = await searxngProvider.isHealthy();
+              const health = await searxngProvider.checkHealth();
               servers.push({
                 name: searxngProvider.name,
-                status: healthy ? 'connected' : 'error',
-                error: healthy ? undefined : 'Health check returned unhealthy',
+                status: health.status,
+                latency_ms: health.latency_ms,
+                error: health.error,
+                error_code: health.error_code,
               });
             } catch (error) {
+              // checkHealth() should not throw — this is a defensive fallback
               servers.push({
                 name: searxngProvider.name,
-                status: 'error',
+                status: error instanceof SsrfError ? 'error' : 'unavailable',
                 error: error instanceof Error ? error.message : 'Unknown error',
+                error_code: error instanceof SsrfError ? error.code : undefined,
               });
             }
           } else {
-            servers.push({ name: 'SearxNG', status: 'error', error: 'Not configured' });
+            servers.push({ name: 'SearxNG', status: 'unavailable', error: 'Not configured' });
           }
         }
 
@@ -93,21 +108,25 @@ export function createHealthTool(
         if (input.provider === 'jinaReader' || input.provider === 'all') {
           if (jinaReaderProvider) {
             try {
-              const healthy = await jinaReaderProvider.isHealthy();
+              const health = await jinaReaderProvider.checkHealth();
               servers.push({
                 name: jinaReaderProvider.name,
-                status: healthy ? 'connected' : 'error',
-                error: healthy ? undefined : 'Health check returned unhealthy',
+                status: health.status,
+                latency_ms: health.latency_ms,
+                error: health.error,
+                error_code: health.error_code,
               });
             } catch (error) {
+              // checkHealth() should not throw — this is a defensive fallback
               servers.push({
                 name: jinaReaderProvider.name,
-                status: 'error',
+                status: error instanceof SsrfError ? 'error' : 'unavailable',
                 error: error instanceof Error ? error.message : 'Unknown error',
+                error_code: error instanceof SsrfError ? error.code : undefined,
               });
             }
           } else {
-            servers.push({ name: 'Jina Reader', status: 'error', error: 'Not configured' });
+            servers.push({ name: 'Jina Reader', status: 'unavailable', error: 'Not configured' });
           }
         }
 
@@ -138,7 +157,7 @@ export function createHealthTool(
             memoryMB,
             cwd: process.cwd(),
           },
-          timestamp: new Date().toISOString(),
+          timestamp,
         };
 
         logger.info('Health tool completed', {
@@ -147,11 +166,13 @@ export function createHealthTool(
           connectedCount,
           totalCount,
           memoryMB,
+          request_id: requestId,
         });
 
         const envelope: ToolResponseEnvelope<HealthResult> = {
           schema_version: SCHEMA_VERSION,
           ok: true,
+          meta,
           result,
         };
 
@@ -162,11 +183,13 @@ export function createHealthTool(
         logger.error('Health tool failed', {
           component: 'health',
           error: error instanceof Error ? error.message : 'Unknown error',
+          request_id: requestId,
         });
 
         const envelope: ToolResponseEnvelope<never> = {
           schema_version: SCHEMA_VERSION,
           ok: false,
+          meta,
           error: {
             code: error instanceof ResearcherError
               ? error.code

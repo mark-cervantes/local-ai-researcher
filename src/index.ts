@@ -18,6 +18,7 @@ import {
 import { loadConfig } from './config.js';
 import { Logger } from './lib/logger.js';
 import { HttpClient } from './lib/http.js';
+import { Cache } from './lib/cache.js';
 import { SearxngProvider } from './providers/searxng.js';
 import { JinaReaderProvider } from './providers/jinaReader.js';
 import { createSearchTool } from './tools/search.js';
@@ -79,10 +80,23 @@ async function main(): Promise<void> {
     }
   );
 
+  // --- Cache (opt-in — only wired when enabled in config) ---
+  const cache = config.cache.enabled
+    ? new Cache({ path: config.cache.path, ttl: config.cache.ttl, enabled: true })
+    : undefined;
+
+  if (cache) {
+    logger.info('Cache enabled', {
+      component: 'main',
+      path: config.cache.path,
+      ttl: config.cache.ttl,
+    });
+  }
+
   // --- Tools ---
-  const searchTool = createSearchTool(searxngProvider, logger);
-  const readTool = createReadTool(jinaReaderProvider, logger);
-  const gatherTool = createGatherTool(searxngProvider, jinaReaderProvider, logger);
+  const searchTool = createSearchTool(searxngProvider, logger, { cache });
+  const readTool = createReadTool(jinaReaderProvider, logger, { cache });
+  const gatherTool = createGatherTool(searxngProvider, jinaReaderProvider, logger, { cache });
   const healthTool = createHealthTool(searxngProvider, jinaReaderProvider, logger);
 
   // Registry uses a loose type to accommodate heterogeneous inputSchema shapes

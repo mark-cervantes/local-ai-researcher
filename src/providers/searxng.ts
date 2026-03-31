@@ -12,10 +12,13 @@ import { createHash } from 'crypto';
 
 import type { SearchResult, SearxngConfig } from '../domain/types.js';
 import { HttpClient } from '../lib/http.js';
+import type { SearchProvider, ProviderHealth } from './interfaces.js';
 import {
   SearxngTimeoutError,
   SearxngUnavailableError,
   SearxngInvalidResponseError,
+  SsrfError,
+  ErrorCode,
 } from '../lib/errors.js';
 import { TimeoutError } from '../lib/errors.js';
 import { canonicalizeUrl } from '../lib/url.js';
@@ -82,7 +85,7 @@ function makeResultId(canonicalUrl: string, query: string, position: number): st
 // ---------------------------------------------------------------------------
 
 /** SearxNG provider */
-export class SearxngProvider {
+export class SearxngProvider implements SearchProvider {
   private config: SearxngConfig;
   private httpClient: HttpClient;
   private logger: Logger;
@@ -91,6 +94,10 @@ export class SearxngProvider {
     this.config = config;
     this.httpClient = httpClient;
     this.logger = logger;
+  }
+
+  get id(): string {
+    return 'searxng';
   }
 
   get name(): string {
@@ -114,6 +121,84 @@ export class SearxngProvider {
         error: error instanceof Error ? error.message : 'Unknown error',
       });
       return false;
+    }
+  }
+
+  /**
+   * Probe SearxNG and return structured readiness with latency.
+   *
+   * Status semantics:
+   * - `connected`   — endpoint responded; search lane is ready.
+   * - `unavailable` — connection failed, timed out, or returned a non-success
+   *                   status; search lane is not usable.
+   * - `error`       — request was blocked by SSRF protection; treat as a
+   *                   configuration problem (error_code: ERR_SSRF_BLOCKED).
+   *
+   * The existing {@link isHealthy} method is kept for backward compatibility.
+   *
+   * @returns Structured health result with latency and optional error info
+   */
+  async checkHealth(): Promise<ProviderHealth> {
+    const startTime = Date.now();
+
+    try {
+      const response = await this.httpClient.get(
+        `${this.config.endpoint}/search`,
+        { timeout: 5000, retry: false }
+      );
+      const latency_ms = Date.now() - startTime;
+
+      const ok = response.status === 200 || response.status === 405;
+      if (ok) {
+        this.logger.debug('SearxNG checkHealth: connected', {
+          component: 'SearxngProvider',
+          latency_ms,
+          status: response.status,
+        });
+        return { status: 'connected', latency_ms };
+      }
+
+      // Non-OK status code — treat as unavailable
+      this.logger.warn('SearxNG checkHealth: unexpected status', {
+        component: 'SearxngProvider',
+        latency_ms,
+        httpStatus: response.status,
+      });
+      return {
+        status: 'unavailable',
+        latency_ms,
+        error: `Unexpected HTTP status: ${response.status}`,
+      };
+    } catch (error) {
+      const latency_ms = Date.now() - startTime;
+
+      // SSRF-blocked requests are a configuration problem, not a connectivity problem
+      if (error instanceof SsrfError) {
+        this.logger.warn('SearxNG checkHealth: SSRF blocked', {
+          component: 'SearxngProvider',
+          latency_ms,
+          error: error.message,
+        });
+        return {
+          status: 'error',
+          latency_ms,
+          error: error.message,
+          error_code: ErrorCode.ERR_SSRF_BLOCKED,
+        };
+      }
+
+      // Any other error (network failure, timeout, etc.) = unavailable
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      this.logger.warn('SearxNG checkHealth: unavailable', {
+        component: 'SearxngProvider',
+        latency_ms,
+        error: message,
+      });
+      return {
+        status: 'unavailable',
+        latency_ms,
+        error: message,
+      };
     }
   }
 

@@ -1,18 +1,20 @@
 /**
  * Read tool — locked v1 implementation.
  *
- * Excerpt-first model: returns 30-line excerpt by default.
- * Full text opt-in: set fullText: true.
+ * Full-content model: returns full content by default.
+ * Set content_mode: 'excerpt' to get truncated preview with metadata.
  * Wraps Jina Reader provider behind the stable MCP/domain contract.
  */
 
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
-import type { ReadResult } from '../domain/types.js';
+import type { ReadResult, ResponseMeta } from '../domain/types.js';
 import { SCHEMA_VERSION } from '../domain/types.js';
-import { JinaReaderProvider } from '../providers/jinaReader.js';
+import type { ReaderProvider } from '../providers/interfaces.js';
 import { ValidationError, ResearcherError } from '../lib/errors.js';
 import { Logger } from '../lib/logger.js';
 import type { ToolResponseEnvelope } from '../domain/types.js';
+import { buildCacheKey, type Cache } from '../lib/cache.js';
 
 // ---------------------------------------------------------------------------
 // Input schema
@@ -26,19 +28,25 @@ export const ReadInputSchema = z.object({
   url: z.string().url().max(2000).describe('URL to read and extract content from'),
 
   /**
-   * Return full text instead of 30-line excerpt (default: false).
-   * Excerpt-first is the locked v1 default.
+   * Content mode: 'full' returns full content, 'excerpt' returns truncated preview.
+   * Default: 'full' (full-content-by-default model).
    */
-  fullText: z.boolean().optional().default(false),
+  content_mode: z.enum(['full', 'excerpt']).optional().default('full'),
 
   /**
    * Target word count for excerpt trimming.
-   * Overrides the 30-line default when set.
+   * Only used when content_mode: 'excerpt'.
    */
   targetWords: z.number().int().min(1).max(10000).optional(),
 
   /** Language hint for Jina Reader (optional) */
   language: z.string().optional(),
+
+  /**
+   * Bypass cache for this request — forces fresh provider call.
+   * Default: false. When true, cache lookup is skipped; cache is NOT updated.
+   */
+  bypass_cache: z.boolean().optional().default(false),
 });
 
 export type ReadInput = z.infer<typeof ReadInputSchema>;
@@ -51,29 +59,58 @@ export type ReadInput = z.infer<typeof ReadInputSchema>;
  * Create the read tool.
  */
 export function createReadTool(
-  provider: JinaReaderProvider,
-  logger: Logger
+  provider: ReaderProvider,
+  logger: Logger,
+  options?: { timeoutMs?: number; cache?: Cache }
 ) {
+  const timeoutMs = options?.timeoutMs ?? 15000; // Default 15s per locked PRD
+  const cache = options?.cache ?? null;
+
   return {
     name: 'read',
     description:
       'Extract content from a URL using Jina Reader. ' +
-      'Returns a 30-line excerpt by default (excerpt-first model). ' +
-      'Set fullText: true to retrieve the full page text.',
+      'Returns full content by default. ' +
+      'Set content_mode: "excerpt" to get a truncated preview.',
     inputSchema: ReadInputSchema,
 
     /**
      * Handle a read request.
+     * Internal overload: accepts _bypassCache to support gather propagation.
      */
     async handler(
-      params: unknown
+      params: unknown,
+      _bypassCacheOverride?: boolean
     ): Promise<{ content: Array<{ type: string; text: string }>; isError?: boolean }> {
       const input = ReadInputSchema.parse(params);
+      // Allow gather to propagate bypass_cache (internal use only)
+      const effectiveBypass = _bypassCacheOverride ?? input.bypass_cache;
+      const requestId = randomUUID();
+      const timestamp = new Date().toISOString();
+
+      // Determine cache_status before operation
+      const cacheEnabled = cache !== null && cache.isEnabled();
+      let cacheStatus: 'hit' | 'miss' | 'bypass' | 'disabled' = cacheEnabled
+        ? (effectiveBypass ? 'bypass' : 'miss')
+        : 'disabled';
+
+      const meta: ResponseMeta = {
+        request_id: requestId,
+        timestamp,
+        provider_id: provider.id,
+        provider_name: provider.name,
+        applied_limits: {
+          timeout_ms: timeoutMs,
+        },
+        cache_status: cacheStatus,
+      };
 
       logger.info('Read tool invoked', {
         component: 'read',
         url: input.url,
-        fullText: input.fullText,
+        content_mode: input.content_mode,
+        bypass_cache: effectiveBypass,
+        request_id: requestId,
       });
 
       // Check URL is supported before making a network call
@@ -85,9 +122,31 @@ export function createReadTool(
         );
       }
 
+      // Cache key includes content_mode — full vs excerpt are separate entries
+      const cacheKey = buildCacheKey(input.url, input.content_mode);
+
+      // Cache lookup when enabled and not bypassed
+      if (cacheEnabled && !effectiveBypass) {
+        const cached = await cache.get<ReadResult>(cacheKey);
+        if (cached) {
+          cacheStatus = 'hit';
+          meta.cache_status = 'hit';
+          logger.debug('Read cache hit', { component: 'read', url: input.url, request_id: requestId });
+
+          const envelope: ToolResponseEnvelope<ReadResult> = {
+            schema_version: SCHEMA_VERSION,
+            ok: true,
+            meta,
+            result: cached.value,
+          };
+          return { content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }] };
+        }
+        logger.debug('Read cache miss', { component: 'read', url: input.url, request_id: requestId });
+      }
+
       try {
         const result: ReadResult = await provider.read(input.url, {
-          fullText: input.fullText,
+          content_mode: input.content_mode,
           targetWords: input.targetWords,
           language: input.language,
         });
@@ -96,11 +155,21 @@ export function createReadTool(
           component: 'read',
           url: input.url,
           wordCount: result.wordCount,
+          content_mode: result.content_mode,
+          content_truncated: result.content_truncated,
+          cache_status: cacheStatus,
+          request_id: requestId,
         });
+
+        // Store in cache on miss (not on bypass)
+        if (cacheEnabled && !effectiveBypass) {
+          await cache.set(cacheKey, result);
+        }
 
         const envelope: ToolResponseEnvelope<ReadResult> = {
           schema_version: SCHEMA_VERSION,
           ok: true,
+          meta,
           result,
         };
 
@@ -112,11 +181,14 @@ export function createReadTool(
           component: 'read',
           url: input.url,
           error: error instanceof Error ? error.message : 'Unknown error',
+          cache_status: cacheStatus,
+          request_id: requestId,
         });
 
         const envelope: ToolResponseEnvelope<never> = {
           schema_version: SCHEMA_VERSION,
           ok: false,
+          meta,
           error: {
             code: error instanceof ResearcherError
               ? error.code

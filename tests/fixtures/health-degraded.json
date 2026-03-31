@@ -1,0 +1,41 @@
+{
+  "_fixture": "health-degraded",
+  "_description": "Canonical v1 health degraded — one provider down (SearxNG unavailable), Jina Reader connected. Overall status must be 'degraded'.",
+  "schema_version": "1",
+  "ok": true,
+  "meta": {
+    "request_id": "782b1213-6b86-46c3-b197-851cb1481d41",
+    "timestamp": "2026-03-31T10:00:08.000Z",
+    "provider_id": "health",
+    "provider_name": "Health Check",
+    "applied_limits": {}
+  },
+  "result": {
+    "status": "degraded",
+    "mcp": {
+      "stdio": {
+        "ready": true,
+        "version": "1.0.0"
+      },
+      "servers": [
+        {
+          "name": "SearxNG",
+          "status": "unavailable",
+          "latency_ms": 5001,
+          "error": "Connection refused",
+          "error_code": "ERR_SEARXNG_UNAVAILABLE"
+        },
+        {
+          "name": "Jina Reader",
+          "status": "connected",
+          "latency_ms": 38
+        }
+      ]
+    },
+    "resources": {
+      "memoryMB": 64,
+      "cwd": "/home/cmark/projects/local-ai-researcher"
+    },
+    "timestamp": "2026-03-31T10:00:08.000Z"
+  }
+}

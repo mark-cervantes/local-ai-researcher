@@ -7,7 +7,7 @@ complexity: M
 difficulty: moderate
 sprint: 5
 depends_on: ["10.01"]
-blocks: ["12.02"]
+blocks: ["12.02", "12.03"]
 parent: "12"
 branch: "feat/task-12-packaging-release-readiness"
 assignee: dev
@@ -38,6 +38,7 @@ As an OpenCode user, I want to launch the server through `npx` or `pnpm dlx` so 
 ### Out of Scope
 - Release notes and operator guide content.
 - Optional cache documentation beyond what is needed for packaging correctness.
+- SearXNG bootstrap script and docker-compose.yml (covered in task 12.03).
 
 ---
 <!-- TECHNICAL GUIDANCE - written by Tech Lead below this line -->
@@ -82,3 +83,9 @@ As an OpenCode user, I want to launch the server through `npx` or `pnpm dlx` so 
 - ESM vs CJS: ensure Node.js resolution works correctly
 - If using bundler (esbuild, etc.), verify all dependencies are bundled or properly external
 - Test against clean node_modules to catch missing dependency declarations
+
+---
+
+## Changes
+- `package.json` — modified (added files field: ["dist", "README.md", "LICENSE"])
+- `src/packaging.test.ts` — new (18 packaging config tests)

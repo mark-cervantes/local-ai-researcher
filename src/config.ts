@@ -54,9 +54,17 @@ const DEFAULTS = {
   GATHER_DEDUP_ENABLED: 'true',
   GATHER_TIMEOUT: '10000',
 
+  // Content policy defaults
+  CONTENT_DEFAULT_MODE: 'full',
+
   // MCP defaults
   MCP_TIMEOUT: '5000',
   MCP_RETRIES: '2',
+
+  // Cache defaults (opt-in, disabled by default)
+  CACHE_ENABLED: 'false',
+  CACHE_PATH: './cache.db',
+  CACHE_TTL: '3600',
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -128,6 +136,15 @@ function parseSources(value: string): Array<'web' | 'local' | 'custom'> {
     });
 }
 
+function parseContentMode(value: string): 'full' | 'excerpt' {
+  if (value === 'full' || value === 'excerpt') return value;
+  throw new ValidationError(
+    `Invalid CONTENT_DEFAULT_MODE: ${value}. Must be 'full' or 'excerpt'`,
+    'CONTENT_DEFAULT_MODE',
+    value
+  );
+}
+
 function parseCidrList(value: string, key: string): string[] {
   if (!value.trim()) return [];
   return value
@@ -197,6 +214,7 @@ export function loadConfig(): Config {
   const mcpRetries = parseNonNegativeInt(getEnv('MCP_RETRIES'), 'MCP_RETRIES');
   const searchDefaultLimit = parsePositiveInt(getEnv('SEARCH_DEFAULT_LIMIT'), 'SEARCH_DEFAULT_LIMIT');
   const gatherTimeout = parsePositiveInt(getEnv('GATHER_TIMEOUT'), 'GATHER_TIMEOUT');
+  const contentDefaultMode = parseContentMode(getEnv('CONTENT_DEFAULT_MODE'));
 
   const config: Config = {
     providers: {
@@ -233,9 +251,17 @@ export function loadConfig(): Config {
       dedupEnabled: parseBool(getEnv('GATHER_DEDUP_ENABLED'), 'GATHER_DEDUP_ENABLED'),
       timeout: gatherTimeout,
     },
+    contentPolicy: {
+      defaultMode: contentDefaultMode,
+    },
     mcp: {
       timeout: mcpTimeout,
       retries: mcpRetries,
+    },
+    cache: {
+      enabled: parseBool(getEnv('CACHE_ENABLED'), 'CACHE_ENABLED'),
+      path: getEnv('CACHE_PATH'),
+      ttl: parsePositiveInt(getEnv('CACHE_TTL'), 'CACHE_TTL'),
     },
   };
 

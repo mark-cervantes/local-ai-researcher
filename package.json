@@ -7,6 +7,11 @@
   "bin": {
     "local-researcher": "./dist/index.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
@@ -14,7 +19,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo 'Lint not configured yet'",
     "test": "vitest run",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "start:docker": "bash scripts/start.sh"
   },
   "keywords": [
     "mcp",

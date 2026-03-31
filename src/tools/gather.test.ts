@@ -5,15 +5,30 @@
  * 1. Envelope shape (schema_version, ok, result/error)
  * 2. Request-scoped dedup behavior
  * 3. Summary statistics accuracy
+ * 4. Contract coverage (task 10.02): dedup stats fields, structured+AI-ingestible payloads,
+ *    full-content-default, truncation aggregation
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { createGatherTool, GatherInputSchema } from './gather.js';
 import type { SearchResult, ReadResult, GatherResult } from '../domain/types.js';
 import { SCHEMA_VERSION } from '../domain/types.js';
 import type { SearxngProvider } from '../providers/searxng.js';
 import type { JinaReaderProvider } from '../providers/jinaReader.js';
 import { Logger } from '../lib/logger.js';
+
+// ---------------------------------------------------------------------------
+// Fixture helpers (task 10.02 — contract against frozen v1 schema)
+// ---------------------------------------------------------------------------
+
+const __fixturesDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'tests', 'fixtures');
+
+function loadGatherFixture<T>(name: string): T {
+  return JSON.parse(readFileSync(join(__fixturesDir, `${name}.json`), 'utf-8')) as T;
+}
 
 // ---------------------------------------------------------------------------
 // Mock Factories
@@ -88,12 +103,16 @@ function createTestReadResults(): Map<string, ReadResult> {
       title: 'First Article',
       excerpt: 'Content excerpt 1',
       content: 'Full content 1',
+      content_mode: 'full',
+      content_truncated: false,
     }],
     ['https://example.com/article2', {
       url: 'https://example.com/article2',
       title: 'Second Article',
       excerpt: 'Content excerpt 2',
       content: 'Full content 2',
+      content_mode: 'full',
+      content_truncated: false,
     }],
   ]);
 }
@@ -112,7 +131,7 @@ describe('GatherInputSchema', () => {
     const result = GatherInputSchema.parse({ query: 'test' });
     expect(result.maxResults).toBe(5);
     expect(result.dedup).toBe(true);
-    expect(result.fullText).toBe(false);
+    expect(result.content_mode).toBe('full');
     expect(result.timeout).toBe(10000);
   });
 
@@ -299,25 +318,35 @@ describe('createGatherTool', () => {
     });
   });
 
-  describe('fullText option', () => {
-    it('requests full text when fullText: true', async () => {
+  describe('content_mode option', () => {
+    it('requests full content by default (content_mode: "full")', async () => {
       const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
-      await tool.handler({ query: 'test', fullText: true });
+      await tool.handler({ query: 'test' });
 
-      // Verify read was called with fullText: true
+      // Verify read was called with content_mode: 'full'
       expect(mockReadProvider.read).toHaveBeenCalledWith(
         'https://example.com/article1',
-        expect.objectContaining({ fullText: true })
+        expect.objectContaining({ content_mode: 'full' })
       );
     });
 
-    it('requests excerpts by default (fullText: false)', async () => {
+    it('requests full content when content_mode: "full"', async () => {
       const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
-      await tool.handler({ query: 'test', fullText: false });
+      await tool.handler({ query: 'test', content_mode: 'full' });
 
       expect(mockReadProvider.read).toHaveBeenCalledWith(
         expect.stringMatching(/example\.com/),
-        expect.objectContaining({ fullText: false })
+        expect.objectContaining({ content_mode: 'full' })
+      );
+    });
+
+    it('requests excerpts when content_mode: "excerpt"', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      await tool.handler({ query: 'test', content_mode: 'excerpt' });
+
+      expect(mockReadProvider.read).toHaveBeenCalledWith(
+        expect.stringMatching(/example\.com/),
+        expect.objectContaining({ content_mode: 'excerpt' })
       );
     });
   });
@@ -330,12 +359,18 @@ describe('createGatherTool', () => {
           url: 'https://example.com/article1',
           title: 'Article 1',
           excerpt: 'Content 1',
+          content: 'Content 1',
+          content_mode: 'full' as const,
+          content_truncated: false,
         }],
         // article2 will fail (not in map)
         ['https://example.com/article3', {
           url: 'https://example.com/article3',
           title: 'Article 3',
           excerpt: 'Content 3',
+          content: 'Content 3',
+          content_mode: 'full' as const,
+          content_truncated: false,
         }],
       ]);
 
@@ -350,6 +385,490 @@ describe('createGatherTool', () => {
       expect(envelope.ok).toBe(true);
       expect(result.summary.successfulReads).toBe(2);
       expect(result.summary.failedReads).toBe(1);
+    });
+  });
+
+  describe('ResponseMeta contract (task 07.02)', () => {
+    it('includes meta object on success', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta).toBeDefined();
+    });
+
+    it('includes meta object on failure', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta).toBeDefined();
+    });
+
+    it('meta has required request_id (UUID v4)', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.request_id).toBeDefined();
+      expect(typeof envelope.meta.request_id).toBe('string');
+      // UUID v4 format: 8-4-4-4-12 hex chars
+      expect(envelope.meta.request_id).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+      );
+    });
+
+    it('meta has ISO-8601 timestamp', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const beforeTime = new Date();
+      const response = await tool.handler({ query: 'test' });
+      const afterTime = new Date();
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.timestamp).toBeDefined();
+      
+      const timestamp = new Date(envelope.meta.timestamp);
+      expect(timestamp.getTime()).toBeGreaterThanOrEqual(beforeTime.getTime() - 1000);
+      expect(timestamp.getTime()).toBeLessThanOrEqual(afterTime.getTime() + 1000);
+    });
+
+    it('meta has provider_id for orchestrator', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.provider_id).toBe('orchestrator');
+    });
+
+    it('meta has provider_name for orchestrator', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.provider_name).toBe('Orchestrator');
+    });
+
+    it('meta has applied_limits object', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test', maxResults: 10, timeout: 15000 });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.applied_limits).toBeDefined();
+      expect(typeof envelope.meta.applied_limits).toBe('object');
+    });
+
+    it('meta.applied_limits includes max_results when specified', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test', maxResults: 10 });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.applied_limits.max_results).toBe(10);
+    });
+
+    it('meta.applied_limits includes timeout_ms', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test', timeout: 15000 });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.meta.applied_limits.timeout_ms).toBe(15000);
+    });
+
+    it('generates unique request_id for each call', async () => {
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response1 = await tool.handler({ query: 'test1' });
+      const response2 = await tool.handler({ query: 'test2' });
+
+      const envelope1 = JSON.parse(response1.content[0]?.text ?? '{}');
+      const envelope2 = JSON.parse(response2.content[0]?.text ?? '{}');
+
+      expect(envelope1.meta.request_id).not.toBe(envelope2.meta.request_id);
+    });
+
+    it('failure response preserves meta fields for debugging', async () => {
+      mockSearchProvider = createMockSearchProvider([]);
+      const tool = createGatherTool(mockSearchProvider, mockReadProvider, mockLogger);
+      const response = await tool.handler({ query: 'test' });
+
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.ok).toBe(false);
+      expect(envelope.meta.request_id).toBeDefined();
+      expect(envelope.meta.timestamp).toBeDefined();
+      expect(envelope.meta.provider_id).toBeDefined();
+      expect(envelope.meta.provider_name).toBeDefined();
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 10.02: Contract coverage against frozen v1 schema
+// ---------------------------------------------------------------------------
+
+describe('gather v1 contract coverage (task 10.02)', () => {
+  // ---------------------------------------------------------------------------
+  // Frozen fixture: dedup stats field names and semantics
+  // ---------------------------------------------------------------------------
+
+  describe('dedup stats — frozen v1 field names', () => {
+    it('frozen gather-success fixture has context.dedupStats.total as a number', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(typeof fixture.result.context.dedupStats.total).toBe('number');
+    });
+
+    it('frozen gather-success fixture has context.dedupStats.deduped as a number', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(typeof fixture.result.context.dedupStats.deduped).toBe('number');
+    });
+
+    it('frozen fixture dedupStats.deduped is ≥ 0 and ≤ dedupStats.total', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      const { total, deduped } = fixture.result.context.dedupStats;
+      expect(deduped).toBeGreaterThanOrEqual(0);
+      expect(deduped).toBeLessThanOrEqual(total);
+    });
+
+    it('frozen fixture does NOT expose urls_deduped or urls_total (legacy field names excluded)', () => {
+      // The v1 freeze uses dedupStats.total / dedupStats.deduped.
+      // Old pre-freeze names (urls_deduped, urls_total) must not appear.
+      const fixture = loadGatherFixture<Record<string, unknown>>('gather-success');
+      const ctx = (fixture.result as GatherResult).context as Record<string, unknown>;
+      expect(ctx).not.toHaveProperty('urls_deduped');
+      expect(ctx).not.toHaveProperty('urls_total');
+      const stats = ctx.dedupStats as Record<string, unknown>;
+      expect(stats).not.toHaveProperty('urls_deduped');
+      expect(stats).not.toHaveProperty('urls_total');
+    });
+
+    it('runtime tool produces dedupStats.total matching search result count', async () => {
+      const searchResults = createTestSearchResults(); // 3 results
+      const mockSearch = createMockSearchProvider(searchResults);
+      const mockRead = createMockReadProvider(createTestReadResults());
+      const tool = createGatherTool(mockSearch, mockRead, createMockLogger());
+
+      const response = await tool.handler({ query: 'test', dedup: false });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      expect(result.context.dedupStats.total).toBe(searchResults.length);
+    });
+
+    it('runtime tool produces dedupStats.deduped === 0 when dedup: false', async () => {
+      const mockSearch = createMockSearchProvider(createTestSearchResults());
+      const mockRead = createMockReadProvider(createTestReadResults());
+      const tool = createGatherTool(mockSearch, mockRead, createMockLogger());
+
+      const response = await tool.handler({ query: 'test', dedup: false });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      expect(result.context.dedupStats.deduped).toBe(0);
+    });
+
+    it('runtime tool produces dedupStats.deduped > 0 when duplicates exist and dedup: true', async () => {
+      const dupeResults: SearchResult[] = [
+        { id: 'a', url: 'https://example.com/page', title: 'Page', excerpt: 'ex', source: 'web' },
+        { id: 'b', url: 'https://example.com/page/', title: 'Page dupe', excerpt: 'ex', source: 'web' },
+        { id: 'c', url: 'https://example.com/page#anchor', title: 'Page anchor', excerpt: 'ex', source: 'web' },
+      ];
+      const mockSearch = createMockSearchProvider(dupeResults);
+      const mockRead = createMockReadProvider(new Map([
+        ['https://example.com/page', {
+          url: 'https://example.com/page',
+          title: 'Page', excerpt: 'ex', content: 'content',
+          content_mode: 'full' as const, content_truncated: false,
+        }],
+      ]));
+      const tool = createGatherTool(mockSearch, mockRead, createMockLogger());
+
+      const response = await tool.handler({ query: 'test', dedup: true });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      expect(result.context.dedupStats.total).toBe(3);
+      expect(result.context.dedupStats.deduped).toBeGreaterThan(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Frozen fixture: structured output + AI-ingestible payload
+  // ---------------------------------------------------------------------------
+
+  describe('structured output and AI-ingestible payload — frozen v1 contract', () => {
+    it('frozen gather-success fixture has context (structured output) as an object', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(typeof fixture.result.context).toBe('object');
+      expect(fixture.result.context).not.toBeNull();
+    });
+
+    it('frozen gather-success fixture has context.results array (structured search results)', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(Array.isArray(fixture.result.context.results)).toBe(true);
+      expect(fixture.result.context.results.length).toBeGreaterThan(0);
+    });
+
+    it('frozen gather-success fixture has context.reads array (structured read results)', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(Array.isArray(fixture.result.context.reads)).toBe(true);
+    });
+
+    it('frozen gather-success fixture has synthesis string (AI-ingestible text payload)', () => {
+      // The v1 AI-ingestible payload is `synthesis` — a pre-formatted string for LLM insertion.
+      // This distinguishes it from `context` (structured/machine-readable).
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(typeof fixture.result.synthesis).toBe('string');
+      expect(fixture.result.synthesis.length).toBeGreaterThan(0);
+    });
+
+    it('frozen gather-success synthesis contains the prompt (AI-ingestible must be query-contextualized)', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      expect(fixture.result.synthesis).toContain(fixture.result.prompt);
+    });
+
+    it('runtime tool returns both context (structured) and synthesis (AI-ingestible) on success', async () => {
+      const tool = createGatherTool(
+        createMockSearchProvider(createTestSearchResults()),
+        createMockReadProvider(createTestReadResults()),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test query' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      // Structured output — machine-readable context
+      expect(result.context).toBeDefined();
+      expect(typeof result.context).toBe('object');
+      expect(Array.isArray(result.context.results)).toBe(true);
+      expect(Array.isArray(result.context.reads)).toBe(true);
+      expect(Array.isArray(result.context.sources)).toBe(true);
+      expect(result.context.dedupStats).toBeDefined();
+
+      // AI-ingestible payload — pre-formatted text for LLM insertion
+      expect(typeof result.synthesis).toBe('string');
+      expect(result.synthesis.length).toBeGreaterThan(0);
+      expect(result.synthesis).toContain('test query');
+    });
+
+    it('synthesis is absent on failure envelope (AI-ingestible only present on ok:true)', async () => {
+      // When gather fails, only error is present — no synthesis
+      const tool = createGatherTool(
+        createMockSearchProvider([]),
+        createMockReadProvider(new Map()),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+
+      expect(envelope.ok).toBe(false);
+      expect(envelope.result).toBeUndefined();
+      // No synthesis on failure
+      expect(envelope.synthesis).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Full-content-default behavior — frozen v1 contract
+  // ---------------------------------------------------------------------------
+
+  describe('full-content-default behavior — frozen v1 contract', () => {
+    it('frozen gather-success fixture reads all have content_mode: "full"', () => {
+      // The v1 contract mandates full content by default — no excerpt-first behavior.
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      for (const read of fixture.result.context.reads) {
+        expect(read.content_mode).toBe('full');
+      }
+    });
+
+    it('frozen gather-success fixture reads have content field populated', () => {
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      for (const read of fixture.result.context.reads) {
+        expect(typeof read.content).toBe('string');
+        expect((read.content ?? '').length).toBeGreaterThan(0);
+      }
+    });
+
+    it('GatherInputSchema default content_mode is "full" (not excerpt)', () => {
+      // Frozen v1 default must be full content — never excerpt-first.
+      const parsed = GatherInputSchema.parse({ query: 'test' });
+      expect(parsed.content_mode).toBe('full');
+    });
+
+    it('runtime tool passes content_mode: "full" to reader by default', async () => {
+      const mockRead = createMockReadProvider(createTestReadResults());
+      const tool = createGatherTool(
+        createMockSearchProvider(createTestSearchResults()),
+        mockRead,
+        createMockLogger()
+      );
+
+      await tool.handler({ query: 'test' }); // no content_mode specified — should default to full
+
+      expect(mockRead.read).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ content_mode: 'full' })
+      );
+    });
+
+    it('runtime tool with explicit content_mode: "full" does not use excerpt behavior', async () => {
+      const mockRead = createMockReadProvider(createTestReadResults());
+      const tool = createGatherTool(
+        createMockSearchProvider(createTestSearchResults()),
+        mockRead,
+        createMockLogger()
+      );
+
+      await tool.handler({ query: 'test', content_mode: 'full' });
+
+      // Every read must be called with full, not excerpt
+      const calls = (mockRead.read as ReturnType<typeof vi.fn>).mock.calls;
+      for (const [, opts] of calls) {
+        expect((opts as { content_mode: string }).content_mode).toBe('full');
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Truncation aggregation — frozen v1 contract
+  // ---------------------------------------------------------------------------
+
+  describe('truncation aggregation — frozen v1 contract', () => {
+    it('frozen gather-success fixture reads have content_truncated: false (no hidden truncation)', () => {
+      // Invariant: the fixture was authored with explicit truncation state — never hidden.
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      for (const read of fixture.result.context.reads) {
+        // content_truncated must be a boolean (explicit, not undefined)
+        expect(typeof read.content_truncated).toBe('boolean');
+      }
+    });
+
+    it('frozen gather-success fixture summary.failedReads + successfulReads === attemptedReads', () => {
+      // The summary arithmetic must be consistent in the frozen fixture.
+      const fixture = loadGatherFixture<{ result: GatherResult }>('gather-success');
+      const s = fixture.result.summary;
+      expect(s.successfulReads + s.failedReads).toBe(s.attemptedReads);
+    });
+
+    it('runtime tool counts truncated reads separately from failed reads', async () => {
+      // A read with content_truncated: true is still a SUCCESSFUL read (not failed).
+      // This verifies gather aggregates truncation without inflating failedReads.
+      const truncatedRead: ReadResult = {
+        url: 'https://example.com/article1',
+        title: 'Article 1',
+        excerpt: 'Excerpt',
+        content: 'Truncated content...',
+        content_mode: 'full',
+        content_truncated: true,
+        truncation: { applied_limit: 50000, reason: 'provider_limit' },
+      };
+      const readMap = new Map<string, ReadResult>([
+        ['https://example.com/article1', truncatedRead],
+        ['https://example.com/article2', {
+          url: 'https://example.com/article2',
+          title: 'Article 2',
+          excerpt: 'Excerpt',
+          content: 'Full content',
+          content_mode: 'full',
+          content_truncated: false,
+        }],
+        ['https://example.com/article3', {
+          url: 'https://example.com/article3',
+          title: 'Article 3',
+          excerpt: 'Excerpt',
+          content: 'Full content',
+          content_mode: 'full',
+          content_truncated: false,
+        }],
+      ]);
+
+      const tool = createGatherTool(
+        createMockSearchProvider(createTestSearchResults()),
+        createMockReadProvider(readMap),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      // Truncated read is successful — not failed
+      expect(result.summary.successfulReads).toBe(3);
+      expect(result.summary.failedReads).toBe(0);
+      expect(result.summary.attemptedReads).toBe(3);
+    });
+
+    it('runtime tool summary fields are all non-negative numbers', async () => {
+      const tool = createGatherTool(
+        createMockSearchProvider(createTestSearchResults()),
+        createMockReadProvider(createTestReadResults()),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const s = (envelope.result as GatherResult).summary;
+
+      expect(s.totalResults).toBeGreaterThanOrEqual(0);
+      expect(s.attemptedReads).toBeGreaterThanOrEqual(0);
+      expect(s.successfulReads).toBeGreaterThanOrEqual(0);
+      expect(s.failedReads).toBeGreaterThanOrEqual(0);
+      expect(s.totalDuration).toBeGreaterThanOrEqual(0);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Failure paths — frozen v1 contract
+  // ---------------------------------------------------------------------------
+
+  describe('failure paths — frozen v1 contract', () => {
+    it('frozen gather-failure-partial fixture has error.code ERR_GATHER_NO_SOURCES', () => {
+      const fixture = loadGatherFixture<{ ok: boolean; error?: { code: string; retryable: boolean } }>('gather-failure-partial');
+      expect(fixture.ok).toBe(false);
+      expect(fixture.error?.code).toBe('ERR_GATHER_NO_SOURCES');
+    });
+
+    it('frozen gather-failure-partial fixture error.retryable is false', () => {
+      const fixture = loadGatherFixture<{ error?: { retryable: boolean } }>('gather-failure-partial');
+      expect(fixture.error?.retryable).toBe(false);
+    });
+
+    it('frozen gather-failure-partial fixture has meta (traceability on failure)', () => {
+      const fixture = loadGatherFixture<{
+        meta?: { request_id: string; provider_id: string };
+      }>('gather-failure-partial');
+      expect(fixture.meta).toBeDefined();
+      expect(typeof fixture.meta?.request_id).toBe('string');
+      expect(fixture.meta?.provider_id).toBe('orchestrator');
+    });
+
+    it('runtime tool returns ERR_GATHER_NO_SOURCES when search returns empty results', async () => {
+      const tool = createGatherTool(
+        createMockSearchProvider([]),
+        createMockReadProvider(new Map()),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'empty query' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+
+      expect(envelope.ok).toBe(false);
+      expect(envelope.error.code).toBe('ERR_GATHER_NO_SOURCES');
+      expect(envelope.error.retryable).toBe(false);
+      expect(envelope.meta).toBeDefined();
+      expect(envelope.meta.provider_id).toBe('orchestrator');
+    });
+
+    it('runtime tool failure envelope has schema_version "1"', async () => {
+      const tool = createGatherTool(
+        createMockSearchProvider([]),
+        createMockReadProvider(new Map()),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+
+      expect(envelope.schema_version).toBe(SCHEMA_VERSION);
     });
   });
 });

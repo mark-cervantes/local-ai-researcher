@@ -80,3 +80,16 @@ As an AI workflow operator, I want every tool response to include consistent req
 - `gather` calls multiple providers; meta must reflect orchestration, not just last provider
 - Error paths often skip metadata in naive implementations — verify failure envelope includes meta
 - `applied_limits` must reflect actual limits used, not just defaults
+
+---
+<!-- COMPLETION — appended by Orchestrator after verification -->
+
+## Changes
+- `src/domain/types.ts` — added `ResponseMeta` interface with request_id, timestamp, provider_id, provider_name, applied_limits
+- `src/tools/search.ts` — meta populated with SearXNG provenance on success and failure
+- `src/tools/read.ts` — meta populated with reader provenance + content_mode/content_truncated
+- `src/tools/gather.ts` — meta populated with orchestration provenance + dedup stats
+- `src/tools/health.ts` — meta populated with provider readiness
+- `src/lib/errors.ts` — error envelopes preserve meta fields for traceability
+- `src/tools/search.test.ts` — new: meta contract BDD tests
+- `src/tools/health.test.ts` — new: meta contract BDD tests

@@ -1,0 +1,21 @@
+{
+  "_fixture": "search-failure",
+  "_description": "Canonical v1 search failure envelope — provider unavailable, meta must be present for traceability",
+  "schema_version": "1",
+  "ok": false,
+  "meta": {
+    "request_id": "26e4eeaa-cf22-4c7a-8d4d-2999e828513d",
+    "timestamp": "2026-03-31T10:00:01.000Z",
+    "provider_id": "searxng",
+    "provider_name": "SearXNG",
+    "applied_limits": {
+      "timeout_ms": 10000,
+      "max_results": 5
+    }
+  },
+  "error": {
+    "code": "ERR_SEARXNG_UNAVAILABLE",
+    "message": "SearxNG is offline or unreachable",
+    "retryable": true
+  }
+}
