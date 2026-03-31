@@ -13,6 +13,7 @@ import type { SearchProvider } from '../providers/interfaces.js';
 import { ResearcherError } from '../lib/errors.js';
 import { Logger } from '../lib/logger.js';
 import type { ToolResponseEnvelope } from '../domain/types.js';
+import { type Cache } from '../lib/cache.js';
 
 // ---------------------------------------------------------------------------
 // Input schema
@@ -45,6 +46,12 @@ export const SearchInputSchema = z.object({
 
   /** Time range filter (e.g., 'day', 'week', 'month') */
   timeRange: z.string().optional(),
+
+  /**
+   * Bypass cache for this request — forces fresh provider call.
+   * Default: false. When true, cache lookup is skipped; cache is NOT updated.
+   */
+  bypass_cache: z.boolean().optional().default(false),
 });
 
 export type SearchInput = z.infer<typeof SearchInputSchema>;
@@ -59,9 +66,10 @@ export type SearchInput = z.infer<typeof SearchInputSchema>;
 export function createSearchTool(
   provider: SearchProvider,
   logger: Logger,
-  options?: { timeoutMs?: number }
+  options?: { timeoutMs?: number; cache?: Cache }
 ) {
   const timeoutMs = options?.timeoutMs ?? 10000; // Default 10s per locked PRD
+  const cache = options?.cache ?? null;
 
   return {
     name: 'search',
@@ -80,6 +88,12 @@ export function createSearchTool(
       const requestId = randomUUID();
       const timestamp = new Date().toISOString();
 
+      // Determine initial cache_status before any operation
+      const cacheEnabled = cache !== null && cache.isEnabled();
+      let cacheStatus: 'hit' | 'miss' | 'bypass' | 'disabled' = cacheEnabled
+        ? (input.bypass_cache ? 'bypass' : 'miss')
+        : 'disabled';
+
       const meta: ResponseMeta = {
         request_id: requestId,
         timestamp,
@@ -89,6 +103,7 @@ export function createSearchTool(
           timeout_ms: timeoutMs,
           max_results: input.limit,
         },
+        cache_status: cacheStatus,
       };
 
       logger.info('Search tool invoked', {
@@ -96,8 +111,32 @@ export function createSearchTool(
         query: input.query,
         limit: input.limit,
         content_mode: input.content_mode,
+        bypass_cache: input.bypass_cache,
         request_id: requestId,
       });
+
+      // Build cache key from query + relevant options
+      const cacheKey = `search:${input.query}:${input.limit ?? 5}:${input.category ?? ''}:${input.language ?? ''}:${input.timeRange ?? ''}`;
+
+      // Cache lookup when enabled and not bypassed
+      if (cacheEnabled && !input.bypass_cache) {
+        const cached = await cache.get<{ results: SearchResult[]; total: number }>(cacheKey);
+        if (cached) {
+          cacheStatus = 'hit';
+          meta.cache_status = 'hit';
+          logger.debug('Search cache hit', { component: 'search', query: input.query, request_id: requestId });
+
+          const envelope: ToolResponseEnvelope<{ results: SearchResult[]; total: number }> = {
+            schema_version: SCHEMA_VERSION,
+            ok: true,
+            meta,
+            result: cached.value,
+          };
+          return { content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }] };
+        }
+        // cache miss — cacheStatus stays 'miss'
+        logger.debug('Search cache miss', { component: 'search', query: input.query, request_id: requestId });
+      }
 
       try {
         const results: SearchResult[] = await provider.search(input.query, {
@@ -111,17 +150,22 @@ export function createSearchTool(
           component: 'search',
           query: input.query,
           resultCount: results.length,
+          cache_status: cacheStatus,
           request_id: requestId,
         });
+
+        const payload = { results, total: results.length };
+
+        // Store in cache on miss (not on bypass — bypass does not update cache)
+        if (cacheEnabled && !input.bypass_cache) {
+          await cache.set(cacheKey, payload);
+        }
 
         const envelope: ToolResponseEnvelope<{ results: SearchResult[]; total: number }> = {
           schema_version: SCHEMA_VERSION,
           ok: true,
           meta,
-          result: {
-            results,
-            total: results.length,
-          },
+          result: payload,
         };
 
         return {
@@ -132,6 +176,7 @@ export function createSearchTool(
           component: 'search',
           query: input.query,
           error: error instanceof Error ? error.message : 'Unknown error',
+          cache_status: cacheStatus,
           request_id: requestId,
         });
 

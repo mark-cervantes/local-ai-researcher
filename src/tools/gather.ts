@@ -28,6 +28,7 @@ import { canonicalizeUrl } from '../lib/url.js';
 import { Logger } from '../lib/logger.js';
 import type { ToolResponseEnvelope } from '../domain/types.js';
 import { ResearcherError } from '../lib/errors.js';
+import { type Cache } from '../lib/cache.js';
 
 // ---------------------------------------------------------------------------
 // Input schema (Zod)
@@ -58,6 +59,13 @@ export const GatherInputSchema = z.object({
 
   /** Total gather timeout ms (default: 10000) */
   timeout: z.number().int().min(1000).max(60000).optional().default(10000),
+
+  /**
+   * Bypass cache for this request — forces fresh provider call for all operations.
+   * Propagates to all nested read calls. Cache is NOT updated on bypass.
+   * Default: false.
+   */
+  bypass_cache: z.boolean().optional().default(false),
 });
 
 export type GatherInput = z.infer<typeof GatherInputSchema>;
@@ -72,8 +80,11 @@ export type GatherInput = z.infer<typeof GatherInputSchema>;
 export function createGatherTool(
   searchProvider: SearchProvider,
   readProvider: ReaderProvider,
-  logger: Logger
+  logger: Logger,
+  options?: { cache?: Cache }
 ) {
+  const cache = options?.cache ?? null;
+
   return {
     name: 'gather',
     description:
@@ -92,6 +103,12 @@ export function createGatherTool(
       const requestId = randomUUID();
       const timestamp = new Date().toISOString();
 
+      // Determine cache_status before any operation
+      const cacheEnabled = cache !== null && cache.isEnabled();
+      let cacheStatus: 'hit' | 'miss' | 'bypass' | 'disabled' = cacheEnabled
+        ? (input.bypass_cache ? 'bypass' : 'miss')
+        : 'disabled';
+
       const meta: ResponseMeta = {
         request_id: requestId,
         timestamp,
@@ -101,6 +118,7 @@ export function createGatherTool(
           timeout_ms: input.timeout,
           max_results: input.maxResults,
         },
+        cache_status: cacheStatus,
       };
 
       logger.info('Gather tool invoked', {
@@ -109,8 +127,31 @@ export function createGatherTool(
         maxResults: input.maxResults,
         content_mode: input.content_mode,
         dedup: input.dedup,
+        bypass_cache: input.bypass_cache,
         request_id: requestId,
       });
+
+      // Gather-level cache key — caches the entire GatherResult
+      const gatherCacheKey = `gather:${input.query}:${input.maxResults ?? 5}:${input.content_mode}:${input.dedup}`;
+
+      // Cache lookup — serve entire cached GatherResult on hit
+      if (cacheEnabled && !input.bypass_cache) {
+        const cached = await cache.get<GatherResult>(gatherCacheKey);
+        if (cached) {
+          cacheStatus = 'hit';
+          meta.cache_status = 'hit';
+          logger.debug('Gather cache hit', { component: 'gather', query: input.query, request_id: requestId });
+
+          const envelope: ToolResponseEnvelope<GatherResult> = {
+            schema_version: SCHEMA_VERSION,
+            ok: true,
+            meta,
+            result: cached.value,
+          };
+          return { content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }] };
+        }
+        logger.debug('Gather cache miss', { component: 'gather', query: input.query, request_id: requestId });
+      }
 
       const startTime = Date.now();
       const gatherTimeout = input.timeout;
@@ -232,8 +273,14 @@ export function createGatherTool(
           totalResults: result.summary.totalResults,
           successfulReads: result.summary.successfulReads,
           totalDuration: result.summary.totalDuration,
+          cache_status: cacheStatus,
           request_id: requestId,
         });
+
+        // Store in cache on miss (not on bypass — bypass does not update cache)
+        if (cacheEnabled && !input.bypass_cache) {
+          await cache.set(gatherCacheKey, result);
+        }
 
         const envelope: ToolResponseEnvelope<GatherResult> = {
           schema_version: SCHEMA_VERSION,

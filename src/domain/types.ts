@@ -57,6 +57,15 @@ export interface ResponseMeta {
 
   /** Cache key for this response (when cache is enabled) */
   cache_key?: string;
+
+  /**
+   * Cache status for this request — observability for troubleshooting.
+   * 'hit'      — cache enabled, bypass_cache false, entry found and valid
+   * 'miss'     — cache enabled, bypass_cache false, no entry found
+   * 'bypass'   — cache enabled, bypass_cache true (lookup skipped)
+   * 'disabled' — cache not enabled in config or no cache injected
+   */
+  cache_status?: 'hit' | 'miss' | 'bypass' | 'disabled';
 }
 
 // ---------------------------------------------------------------------------

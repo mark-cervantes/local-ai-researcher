@@ -101,6 +101,14 @@ export class Cache {
   }
 
   /**
+   * Returns true when the cache is enabled and operational.
+   * Tools use this to determine cache_status: 'disabled' vs 'hit'/'miss'/'bypass'.
+   */
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /**
    * Get a cached value by key.
    * Returns null for misses, expired entries, or when cache is disabled.
    */
