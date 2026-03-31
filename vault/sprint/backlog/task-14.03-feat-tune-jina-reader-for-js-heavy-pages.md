@@ -198,3 +198,21 @@ describe('JS-heavy page tuning (jsOptions)', () => {
 4. **`waitForSelector` with a typo-ed selector will silently wait until timeout.** There is no validation Jina can do on the selector before sending the HTTP request. Log the selector value at debug level (already covered in Step 4) so callers can diagnose slow reads.
 
 5. **`JinaJsOptions` is not exported.** The interface is an implementation detail of the Jina provider. Keep it unexported (`interface`, not `export interface`) unless a test file explicitly needs to import it. Tests should construct the literal object inline.
+
+---
+
+## Tests
+
+**Test file:** `src/providers/jinaReader.test.ts`
+**Describe block:** `JS-heavy page tuning (jsOptions)`
+**Committed:** `b791586 test(14.03): add failing BDD tests for JS-heavy Jina Reader tuning`
+
+| # | Test name | Status | Reason |
+|---|-----------|--------|--------|
+| 1 | `sends X-Timeout header when jsOptions.timeout is set` | 🔴 RED | `jsOptions` field does not exist on `JinaReaderOptions` yet; production code sends no `X-Timeout` header |
+| 2 | `sends X-Wait-For-Selector header when jsOptions.waitForSelector is set` | 🔴 RED | Same — `JinaJsOptions` and header-merge block not yet implemented |
+| 3 | `sends X-With-Links-Summary header when jsOptions.withLinksSummary is true` | 🔴 RED | Same — `X-With-Links-Summary` header never sent today |
+| 4 | `sends X-Return-Format header when jsOptions.returnFormat is set` | 🔴 RED | Same — `X-Return-Format` header never sent today |
+| 5 | `does not send JS tuning headers when jsOptions is absent` | 🟢 GREEN | Negative assertion — none of the four JS headers are present in the current code path, which is already the correct baseline behavior |
+| 6 | `still marks read as degraded when JS-heavy response has < 20 words despite jsOptions` | 🟢 GREEN | Degraded flag logic exists from 14.02; `as any` cast lets `jsOptions` be passed without a type error, and the mock returns 5-word content |
+| 7 | `propagates errors correctly when jsOptions is present` | 🟢 GREEN | Error propagation path is unchanged; `as any` cast passes through and the existing re-throw logic fires |
