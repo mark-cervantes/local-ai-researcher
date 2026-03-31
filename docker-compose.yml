@@ -5,4 +5,6 @@ services:
       - "8080:8080"
     volumes:
       - ./searxng:/etc/searxng
-    restart: unless-stopped
+    # No restart policy — SearXNG stops on machine reboot or `bash scripts/stop.sh`.
+    # For automatic lifecycle management tied to OpenCode sessions, see the optional
+    # plugin documented in README.md under "SearXNG Lifecycle Plugin".
