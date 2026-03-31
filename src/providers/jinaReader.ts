@@ -24,6 +24,18 @@ import { Logger } from '../lib/logger.js';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Jina Reader JS-heavy page tuning options (provider-local, unexported) */
+interface JinaJsOptions {
+  /** X-Timeout: wait up to N seconds for page load. Max recommended: 30. Note: must be < config.timeout/1000 to avoid HTTP client cutting connection first. */
+  timeout?: number;
+  /** X-Wait-For-Selector: wait for CSS element before extracting */
+  waitForSelector?: string;
+  /** X-With-Links-Summary: include a summary of links found in the page */
+  withLinksSummary?: boolean;
+  /** X-Return-Format: control Jina output format */
+  returnFormat?: 'markdown' | 'text' | 'html';
+}
+
 /** Jina Reader request options */
 export interface JinaReaderOptions {
   /**
@@ -37,6 +49,9 @@ export interface JinaReaderOptions {
 
   /** Language hint for Jina Reader (optional) */
   language?: string;
+
+  /** JS-heavy page tuning options */
+  jsOptions?: JinaJsOptions;
 }
 
 /**
@@ -288,11 +303,28 @@ export class JinaReaderProvider implements ReaderProvider {
         headers['Authorization'] = `Bearer ${this.config.apiKey}`;
       }
 
+      // Merge JS-tuning headers if provided (no-op when jsOptions is absent)
+      if (options.jsOptions) {
+        if (options.jsOptions.timeout !== undefined) {
+          headers['X-Timeout'] = String(options.jsOptions.timeout);
+        }
+        if (options.jsOptions.waitForSelector) {
+          headers['X-Wait-For-Selector'] = options.jsOptions.waitForSelector;
+        }
+        if (options.jsOptions.withLinksSummary) {
+          headers['X-With-Links-Summary'] = 'true';
+        }
+        if (options.jsOptions.returnFormat) {
+          headers['X-Return-Format'] = options.jsOptions.returnFormat;
+        }
+      }
+
       this.logger.debug('Jina Reader request', {
         component: 'JinaReaderProvider',
         url,
         readerUrl: fullUrl,
         content_mode: contentMode,
+        jsOptions: options.jsOptions ?? null,
       });
 
       const response = await this.httpClient.get(fullUrl, {
