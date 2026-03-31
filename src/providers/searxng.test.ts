@@ -575,6 +575,122 @@ describe('SearxngProvider', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Language and engine configuration (task 14.01)
+  // -------------------------------------------------------------------------
+
+  describe('language and engine configuration', () => {
+    // Helper: extract URLSearchParams from the URL passed to mockHttpClient.get
+    function capturedParams(): URLSearchParams {
+      const call = (mockHttpClient.get as ReturnType<typeof vi.fn>).mock.calls[0]!;
+      const calledUrl: string = call[0] as string;
+      const queryString = calledUrl.includes('?') ? calledUrl.split('?')[1]! : '';
+      return new URLSearchParams(queryString);
+    }
+
+    it('applies English default with engine exclusion when language not specified', async () => {
+      // Arrange: valid response; no language in options (undefined)
+      const rawResponse = createRawSearxngResponse('test', [
+        { url: 'https://example.com/1', title: 'Article 1', content: 'Content 1' },
+      ]);
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: rawResponse,
+        text: JSON.stringify(rawResponse),
+      });
+
+      // Act: call search with no language option at all
+      await provider.search('test');
+
+      // Assert: URL must contain language=en AND engines exclusion param
+      const params = capturedParams();
+      expect(params.get('language')).toBe('en');
+      expect(params.get('engines')).toBe('-bing news,-google news,-yahoo news,-ddg definitions');
+    });
+
+    it('respects explicit English language without engine exclusion', async () => {
+      // Arrange: valid response; language explicitly set to 'en'
+      const rawResponse = createRawSearxngResponse('test', [
+        { url: 'https://example.com/1', title: 'Article 1', content: 'Content 1' },
+      ]);
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: rawResponse,
+        text: JSON.stringify(rawResponse),
+      });
+
+      // Act: explicit language 'en' — caller intent always wins
+      await provider.search('test', { language: 'en' });
+
+      // Assert: URL must have language=en but NO engines param
+      const params = capturedParams();
+      expect(params.get('language')).toBe('en');
+      expect(params.get('engines')).toBeNull();
+    });
+
+    it('respects explicit non-English language without engine exclusion', async () => {
+      // Arrange: valid response; language explicitly set to 'de'
+      const rawResponse = createRawSearxngResponse('test', [
+        { url: 'https://example.com/1', title: 'Article 1', content: 'Content 1' },
+      ]);
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: rawResponse,
+        text: JSON.stringify(rawResponse),
+      });
+
+      // Act: explicit non-English language
+      await provider.search('test', { language: 'de' });
+
+      // Assert: URL must have language=de and NO engines param
+      const params = capturedParams();
+      expect(params.get('language')).toBe('de');
+      expect(params.get('engines')).toBeNull();
+    });
+
+    it('excluded engines list does not affect response normalization', async () => {
+      // Arrange: raw response where results appear to come from normally-excluded engines
+      // (exclusion is request-side; if SearXNG returns them they must still normalize correctly)
+      const rawResponse = createRawSearxngResponse('test', [
+        {
+          url: 'https://news.example.com/article',
+          title: 'Breaking News',
+          content: 'Some news content',
+          engine: 'bing news',
+          score: 0.7,
+        },
+        {
+          url: 'https://definitions.example.com/word',
+          title: 'Word Definition',
+          content: 'A definition of a word',
+          engine: 'ddg definitions',
+        },
+      ]);
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: rawResponse,
+        text: JSON.stringify(rawResponse),
+      });
+
+      // Act: call search with no language (triggers engine exclusion in request)
+      const results = await provider.search('test');
+
+      // Assert: provider still normalizes results correctly regardless of their engine source
+      expect(results).toHaveLength(2);
+      expect(results[0]!.url).toBe('https://news.example.com/article');
+      expect(results[0]!.title).toBe('Breaking News');
+      expect(results[0]!.excerpt).toBe('Some news content');
+      expect(results[0]!.source).toBe('web');
+      expect(results[0]!.relevance).toBe(0.7);
+      expect(results[0]!._engine).toBe('bing news');
+      expect(results[1]!.url).toBe('https://definitions.example.com/word');
+      expect(results[1]!._engine).toBe('ddg definitions');
+      // Provider-specific fields must not leak into normalized output
+      expect(results[0]).not.toHaveProperty('engine');
+      expect(results[0]).not.toHaveProperty('engines');
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // checkHealth (task 08.02)
   // -------------------------------------------------------------------------
 
