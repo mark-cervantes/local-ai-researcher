@@ -10,6 +10,8 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import type { ZodTypeAny } from 'zod';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -122,7 +124,7 @@ async function main(): Promise<void> {
       tools: Array.from(toolRegistry.values()).map(tool => ({
         name: tool.name,
         description: tool.description,
-        inputSchema: tool.inputSchema,
+        inputSchema: zodToJsonSchema(tool.inputSchema as ZodTypeAny),
       })),
     };
   });
