@@ -817,6 +817,109 @@ describe('gather v1 contract coverage (task 10.02)', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // Task 14.02: Degraded reads — AC3 and AC4
+  // ---------------------------------------------------------------------------
+
+  describe('degraded reads in summary (task 14.02)', () => {
+    it('reports degraded reads separately in summary', async () => {
+      // Arrange: 3 reads — 1 degraded (~15 words), 2 normal (~50 words each)
+      // degradedReads field doesn't exist on GatherResult.summary yet — RED until 14.02
+      const mixedReadResults = new Map<string, ReadResult>([
+        ['https://example.com/article1', {
+          url: 'https://example.com/article1',
+          title: 'Short Article',
+          excerpt: 'short',
+          content: Array.from({ length: 15 }, (_, i) => `word${i + 1}`).join(' '),
+          content_mode: 'full' as const,
+          content_truncated: false,
+          wordCount: 15,
+          degraded: true, // AC1: <20 words → degraded
+        } as ReadResult],
+        ['https://example.com/article2', {
+          url: 'https://example.com/article2',
+          title: 'Normal Article 2',
+          excerpt: 'normal content',
+          content: Array.from({ length: 50 }, (_, i) => `word${i + 1}`).join(' '),
+          content_mode: 'full' as const,
+          content_truncated: false,
+          wordCount: 50,
+          degraded: false,
+        } as ReadResult],
+        ['https://example.com/article3', {
+          url: 'https://example.com/article3',
+          title: 'Normal Article 3',
+          excerpt: 'normal content',
+          content: Array.from({ length: 50 }, (_, i) => `content${i + 1}`).join(' '),
+          content_mode: 'full' as const,
+          content_truncated: false,
+          wordCount: 50,
+          degraded: false,
+        } as ReadResult],
+      ]);
+
+      const tool = createGatherTool(
+        createMockSearchProvider(createTestSearchResults()), // 3 search results
+        createMockReadProvider(mixedReadResults),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      // AC3: degradedReads = 1, successfulReads = 2 (excludes degraded), context.reads still has all 3
+      expect(result.summary.degradedReads).toBe(1);
+      expect(result.summary.successfulReads).toBe(2);
+      expect(result.context.reads).toHaveLength(3);
+    });
+
+    it('counts normal reads as successful when wordCount >= 20', async () => {
+      // Arrange: 2 reads, both ~50 words — no degraded reads
+      const normalReadResults = new Map<string, ReadResult>([
+        ['https://example.com/article1', {
+          url: 'https://example.com/article1',
+          title: 'Normal Article 1',
+          excerpt: 'normal content',
+          content: Array.from({ length: 50 }, (_, i) => `word${i + 1}`).join(' '),
+          content_mode: 'full' as const,
+          content_truncated: false,
+          wordCount: 50,
+          degraded: false,
+        } as ReadResult],
+        ['https://example.com/article2', {
+          url: 'https://example.com/article2',
+          title: 'Normal Article 2',
+          excerpt: 'normal content',
+          content: Array.from({ length: 50 }, (_, i) => `content${i + 1}`).join(' '),
+          content_mode: 'full' as const,
+          content_truncated: false,
+          wordCount: 50,
+          degraded: false,
+        } as ReadResult],
+      ]);
+
+      const twoResults: SearchResult[] = [
+        { id: 'id-1', url: 'https://example.com/article1', title: 'Article 1', excerpt: 'ex', source: 'web' },
+        { id: 'id-2', url: 'https://example.com/article2', title: 'Article 2', excerpt: 'ex', source: 'web' },
+      ];
+
+      const tool = createGatherTool(
+        createMockSearchProvider(twoResults),
+        createMockReadProvider(normalReadResults),
+        createMockLogger()
+      );
+
+      const response = await tool.handler({ query: 'test' });
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      const result: GatherResult = envelope.result;
+
+      // AC4: no degraded reads, all 2 count as successful
+      expect(result.summary.degradedReads).toBe(0);
+      expect(result.summary.successfulReads).toBe(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Failure paths — frozen v1 contract
   // ---------------------------------------------------------------------------
 

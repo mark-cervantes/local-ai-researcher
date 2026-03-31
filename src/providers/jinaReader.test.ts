@@ -257,6 +257,52 @@ describe('JinaReaderProvider', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Task 14.02: Degraded read detection
+  // ---------------------------------------------------------------------------
+
+  describe('degraded read detection (task 14.02)', () => {
+    it('flags read as degraded when wordCount < 20', async () => {
+      // Arrange: mock provider response with exactly 15 words
+      const shortContent = 'one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen';
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: {
+          url: TEST_URL,
+          title: 'Short Article',
+          content: shortContent,
+        },
+      });
+
+      // Act
+      const result = await provider.read(TEST_URL);
+
+      // Assert: wordCount is 15 and degraded is true
+      expect(result.wordCount).toBe(15);
+      expect(result.degraded).toBe(true);
+    });
+
+    it('does not flag read as degraded when wordCount >= 20', async () => {
+      // Arrange: mock provider response with 50 words (FULL_CONTENT has 70 words)
+      const normalContent = Array.from({ length: 50 }, (_, i) => `word${i + 1}`).join(' ');
+      (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        body: {
+          url: TEST_URL,
+          title: 'Normal Article',
+          content: normalContent,
+        },
+      });
+
+      // Act
+      const result = await provider.read(TEST_URL);
+
+      // Assert: wordCount is 50 and degraded is false (or absent/falsy)
+      expect(result.wordCount).toBe(50);
+      expect(result.degraded).toBe(false);
+    });
+  });
+
   describe('checkHealth', () => {
     it('returns connected on successful 200 response', async () => {
       (mockHttpClient.get as ReturnType<typeof vi.fn>).mockResolvedValueOnce({

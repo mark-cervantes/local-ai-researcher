@@ -368,6 +368,40 @@ describe('createReadTool', () => {
     });
   });
 
+  // ---------------------------------------------------------------------------
+  // Task 14.02: Degraded quality signal
+  // ---------------------------------------------------------------------------
+
+  describe('degraded quality signal (task 14.02)', () => {
+    it('exposes degraded quality signal in read response', async () => {
+      // Arrange: provider returns a ReadResult with degraded: true (short content, <20 words)
+      // degraded field doesn't exist on ReadResult yet — this test is RED until 14.02 is implemented.
+      // Cast to ReadResult so the mock compiles while the field is missing from the type.
+      const degradedResult = {
+        url: TEST_URL,
+        title: 'Short Article',
+        content: 'one two three four five six',
+        excerpt: 'one two three four five six',
+        content_mode: 'full' as const,
+        content_truncated: false,
+        wordCount: 6,
+        degraded: true, // AC2: quality signal — not yet in ReadResult type
+        duration: 50,
+      } as ReadResult;
+
+      const results = new Map([[TEST_URL, degradedResult]]);
+      mockReadProvider = createMockReadProvider(results);
+
+      const tool = createReadTool(mockReadProvider, mockLogger);
+      const response = await tool.handler({ url: TEST_URL });
+
+      // Assert: envelope exposes result.degraded === true
+      const envelope = JSON.parse(response.content[0]?.text ?? '{}');
+      expect(envelope.ok).toBe(true);
+      expect(envelope.result.degraded).toBe(true);
+    });
+  });
+
   describe('tool description', () => {
     it('does not describe excerpt-first as the default', () => {
       const tool = createReadTool(mockReadProvider, mockLogger);

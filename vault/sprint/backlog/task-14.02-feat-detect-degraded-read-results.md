@@ -179,3 +179,17 @@ it('counts normal reads as successful when wordCount >= 20', async () => {
 1. **wordCount=0 edge case:** Empty content (wordCount=0) is degraded. Ensure provider handles this gracefully.
 2. **successfulReads semantic change:** Existing code that logs or displays `successfulReads` will now show a lower number when degraded reads exist. This is intentional per AC1.
 3. **Cache consideration:** Cached `ReadResult` objects without `degraded` field will be served as-is. Consider cache invalidation or tolerate the field being absent (treat as `false`).
+
+---
+
+## Tests
+
+All tests written by QA agent as part of BDD red phase. Status at commit: 4/5 failing (RED), 1/5 passing (read.test.ts is GREEN by design — it verifies pass-through semantics which don't require new production code).
+
+| # | Test Name | File | AC | Status |
+|---|-----------|------|----|--------|
+| 1 | `flags read as degraded when wordCount < 20` | `src/providers/jinaReader.test.ts` | AC1 | RED |
+| 2 | `does not flag read as degraded when wordCount >= 20` | `src/providers/jinaReader.test.ts` | AC1/AC4 | RED |
+| 3 | `exposes degraded quality signal in read response` | `src/tools/read.test.ts` | AC2 | GREEN (pass-through; no new production code needed in read.ts) |
+| 4 | `reports degraded reads separately in summary` | `src/tools/gather.test.ts` | AC3 | RED |
+| 5 | `counts normal reads as successful when wordCount >= 20` | `src/tools/gather.test.ts` | AC4 | RED |
