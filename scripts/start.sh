@@ -2,22 +2,14 @@
 set -euo pipefail
 
 # Resolve the package root robustly — works whether invoked as:
-#   - node_modules/.bin/local-researcher (npx, symlink/copy in .bin/)
+#   - node_modules/.bin/local-researcher (npx — .bin entry is a symlink)
 #   - scripts/start.sh directly (dev/local use)
 #
-# Strategy: walk up from this script's real location until we find a
-# package.json with "name": "local-ai-researcher", or fall back to the
-# classic SCRIPT_DIR/.. heuristic for direct invocation.
-
-_SCRIPT_REAL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
-_DIR="$(dirname "$_SCRIPT_REAL")"
-
-PROJECT_ROOT=""
-while [ "$_DIR" != "/" ]; do
-  if [ -f "$_DIR/package.json" ] && grep -q '"local-ai-researcher"' "$_DIR/package.json" 2>/dev/null; then
-    PROJECT_ROOT="$_DIR"
-    break
-  fi
+# readlink -f resolves symlinks, so .bin/local-researcher → scripts/start.sh
+# inside the actual package dir. SCRIPT_DIR/.. is then the package root in
+# both cases.
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
   _DIR="$(dirname "$_DIR")"
 done
 
