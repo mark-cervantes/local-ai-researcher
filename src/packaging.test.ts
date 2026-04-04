@@ -58,13 +58,15 @@ describe('package.json files field', () => {
     expect(includesDist).toBe(true)
   })
 
-  it('files field does not include src/', () => {
-    // FAILS: files field is missing, so src/ exclusion cannot be validated
+  it('files field includes src/ for npx github: on-demand build', () => {
+    // REQUIRED: src/ must be included for npx github: distribution model.
+    // When prepare script is blocked (pnpm blocks it for git deps),
+    // start.sh rebuilds dist/ on first run, which requires TypeScript sources.
+    // See commit 468c871: "fix(pkg): include src/ and tsconfig.json in files"
     const files: string[] = pkg.files ?? []
-    // A missing files field publishes everything — fail the assertion explicitly
     expect(Array.isArray(files)).toBe(true)
     const includesSrc = files.some((f) => f === 'src' || f === 'src/')
-    expect(includesSrc).toBe(false)
+    expect(includesSrc).toBe(true)
   })
 
   it('files field does not include test files', () => {
@@ -75,12 +77,15 @@ describe('package.json files field', () => {
     expect(includesTests).toBe(false)
   })
 
-  it('files field does not include tsconfig.json', () => {
-    // FAILS: files field is missing, so dev-config exclusion cannot be validated
+  it('files field includes tsconfig.json for npx github: on-demand build', () => {
+    // REQUIRED: tsconfig.json must be included for npx github: distribution model.
+    // When prepare script is blocked (pnpm blocks it for git deps),
+    // start.sh rebuilds dist/ on first run, which requires the TypeScript config.
+    // See commit 468c871: "fix(pkg): include src/ and tsconfig.json in files"
     const files: string[] = pkg.files ?? []
     expect(Array.isArray(files)).toBe(true)
     const includesTsconfig = files.some((f) => f === 'tsconfig.json')
-    expect(includesTsconfig).toBe(false)
+    expect(includesTsconfig).toBe(true)
   })
 })
 
