@@ -10,14 +10,6 @@ set -euo pipefail
 # both cases.
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-  _DIR="$(dirname "$_DIR")"
-done
-
-# Fallback: classic SCRIPT_DIR/.. (direct invocation from scripts/)
-if [ -z "$PROJECT_ROOT" ]; then
-  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-fi
 
 # Guard: build dist/ if missing (e.g. npx github: install where prepare was blocked)
 # Always use npm here — pnpm blocks prepare scripts for git-hosted deps
